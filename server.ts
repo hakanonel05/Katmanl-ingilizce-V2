@@ -261,6 +261,35 @@ function isRateLimitError(err: any): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 429 hatasinin GUNLUK mi DAKIKALIK mi oldugunu ayirt eder.
+ * Ikisi cok farkli: dakikalik limitte beklemek yeter, gunluk limitte
+ * kota UTC gece yarisina kadar geri gelmez.
+ */
+function describeRateLimit(error: any): string {
+  const raw = (error?.message || '') + JSON.stringify(error || {});
+
+  const retryMatch = raw.match(/retryDelay["':\s]+([0-9.]+)s/i);
+  const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
+
+  const isDaily = /PerDay|RequestsPerDay|daily/i.test(raw);
+  const isPerMinute = /PerMinute|RequestsPerMinute|TokensPerMinute/i.test(raw);
+
+  if (isDaily) {
+    return "GUNLUK ucretsiz kotan doldu. Bu kota UTC gece yarisinda (Turkiye saatiyle 03:00) sifirlanir. Beklemek istemiyorsan AI_PROVIDER ortam degiskenini 'groq' yapip Groq'un ayri kotasini kullanabilirsin.";
+  }
+
+  if (isPerMinute) {
+    return retrySeconds
+      ? `Dakikalik istek limitine takildin. Yaklasik ${retrySeconds} saniye sonra tekrar deneyin.`
+      : "Dakikalik istek limitine takildin. Bir dakika bekleyip tekrar deneyin.";
+  }
+
+  return retrySeconds
+    ? `Yapay zeka istek limitine ulasildi. Yaklasik ${retrySeconds} saniye sonra tekrar deneyin.`
+    : "Yapay zeka istek limitine ulasildi. Lutfen 30 saniye sonra tekrar deneyin.";
+}
+
 /** Groq'un OpenAI uyumlu sohbet ucunu cagirir. */
 async function callGroq(
   model: string,
@@ -708,7 +737,7 @@ app.post("/api/extract-transcript", async (req, res) => {
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
     const msg = isQuota
-      ? "Yapay zeka istek limitine (Rate Limit) ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Transkript islenirken hata olustu.");
     res.status(statusCode).json({ error: msg });
   }
@@ -811,7 +840,7 @@ app.post("/api/translate-batch", async (req, res) => {
     const isQuota = isRateLimitError(error);
     res.status(isQuota ? 429 : 500).json({
       error: isQuota
-        ? "Yapay zeka istek limitine ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+        ? describeRateLimit(error)
         : formatErrorMessage(error, "Ceviri yapilamadi."),
     });
   }
@@ -837,7 +866,7 @@ app.post("/api/study-material", async (req, res) => {
     const isQuota = isRateLimitError(error);
     res.status(isQuota ? 429 : 500).json({
       error: isQuota
-        ? "Yapay zeka istek limitine ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+        ? describeRateLimit(error)
         : formatErrorMessage(error, "Ogrenme materyali uretilemedi."),
     });
   }
@@ -918,8 +947,8 @@ Lütfen şu analizleri yapıp JSON döndür:
     console.error("Error in /api/analyze-phonetics-grammar:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
+    const msg = isQuota
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Gramer analizi oluşturulurken hata oluştu.");
     res.status(statusCode).json({ error: msg });
   }
@@ -974,8 +1003,8 @@ JSON Formatı:
     console.error("Error in /api/generate-quiz:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
+    const msg = isQuota
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Quiz oluşturulamadı.");
     res.status(statusCode).json({ error: msg });
   }
@@ -1045,8 +1074,8 @@ Lütfen kullanıcı metnini dikkatle incele ve JSON formatında geri bildirim sa
     console.error("Error in /api/evaluate-writing:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
+    const msg = isQuota
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Yazı değerlendirilemedi.");
     res.status(statusCode).json({ error: msg });
   }
@@ -1096,8 +1125,8 @@ JSON Formatı:
     console.error("Error in /api/speaking-chat:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
+    const msg = isQuota
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Konuşma simülasyonunda hata oluştu.");
     res.status(statusCode).json({ error: msg });
   }
@@ -1129,8 +1158,8 @@ Kullanıcı Sorusu: "${question}"
     console.error("Error in /api/ask-grammar-coach:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
+    const msg = isQuota
+      ? describeRateLimit(error)
       : formatErrorMessage(error, "Gramer koçu yanıt veremedi.");
     res.status(statusCode).json({ error: msg });
   }
