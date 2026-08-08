@@ -15,10 +15,15 @@ import { GrammarCoachDrawer } from './components/GrammarCoachDrawer';
 import { EditLessonModal } from './components/EditLessonModal';
 import { extractYouTubeId } from './lib/youtube';
 
+// Sürüm anahtarı: eski kayıtlarda bozuk/eksik zaman damgaları vardı.
+// Anahtar değiştiği için eski dersler otomatik devre dışı kalır ve
+// kullanıcının localStorage'ı elle temizlemesine gerek kalmaz.
+const LESSONS_STORAGE_KEY = 'layered_learning_lessons_v2';
+
 export default function App() {
   const [lessons, setLessons] = useState<VideoLesson[]>(() => {
     try {
-      const saved = localStorage.getItem('layered_learning_lessons');
+      const saved = localStorage.getItem(LESSONS_STORAGE_KEY);
       if (saved !== null) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
@@ -40,7 +45,7 @@ export default function App() {
   // Sync lessons to localStorage when updated
   useEffect(() => {
     try {
-      localStorage.setItem('layered_learning_lessons', JSON.stringify(lessons));
+      localStorage.setItem(LESSONS_STORAGE_KEY, JSON.stringify(lessons));
     } catch (e) {
       console.error('Failed to save lessons to localStorage:', e);
     }
@@ -219,6 +224,48 @@ export default function App() {
     }
   }, [activeLessonId, activeLesson?.id, activeLesson?.vocabulary?.length, activeLesson?.grammarRules?.length, activeLesson?.quizQuestions?.length]);
 
+  /**
+   * Mevcut bir dersi (özellikle elle yazılmış hazır dersleri) videonun
+   * GERÇEK YouTube altyazısından yeniden üretir. Cümleler ve zaman
+   * damgaları sunucuda gerçek cue verisinden hesaplanır.
+   */
+  const handleResyncLessonFromCaptions = async (lessonId: string) => {
+    const target = lessons.find((l) => l.id === lessonId);
+    if (!target) throw new Error('Ders bulunamadı.');
+
+    const url = target.youtubeUrl || target.youtubeId || '';
+    if (!extractYouTubeId(url)) {
+      throw new Error('Bu derste geçerli bir YouTube linki yok. Önce "URL Değiştir" ile link ekleyin.');
+    }
+
+    const res = await fetch('/api/extract-transcript', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoInput: url }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Altyazı çekilemedi.');
+    if (!data.hasRealTimings) {
+      throw new Error('Bu videoda zaman bilgisi içeren bir altyazı bulunamadı.');
+    }
+
+    setLessons((prev) =>
+      prev.map((l) => {
+        if (l.id !== lessonId) return l;
+        return {
+          ...l,
+          title: data.title || l.title,
+          sentences: data.sentences || l.sentences,
+          hasRealTimings: true,
+          vocabulary: data.vocabulary?.length ? data.vocabulary : l.vocabulary,
+          grammarRules: data.grammarRules?.length ? data.grammarRules : l.grammarRules,
+          quizQuestions: data.quizQuestions?.length ? data.quizQuestions : l.quizQuestions,
+        };
+      })
+    );
+  };
+
   // Update Lesson YouTube Video URL
   const handleUpdateLessonVideoUrl = (youtubeUrl: string) => {
     const ytId = extractYouTubeId(youtubeUrl);
@@ -328,6 +375,7 @@ export default function App() {
                   bookmarkedWords={progress.bookmarkedWords}
                   onCompleteLayer={() => handleCompleteLayer(1)}
                   onUpdateVideoUrl={handleUpdateLessonVideoUrl}
+                  onResyncFromCaptions={() => handleResyncLessonFromCaptions(activeLesson.id)}
                 />
               )}
 
