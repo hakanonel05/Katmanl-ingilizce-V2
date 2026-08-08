@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
+// NOT: vite yalnizca gelistirme modunda gerekli. Statik import birakilirsa
+// Netlify fonksiyon paketine tum Vite girer. Bu yuzden startServer() icinde
+// dinamik olarak yukleniyor.
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { YoutubeTranscript } from "youtube-transcript";
@@ -442,6 +444,47 @@ TALIMATLAR:
 
 // API Endpoints
 
+/**
+ * 0. TESHIS UCU: Sadece altyaziyi cekip ozet dondurur, Gemini cagrilmaz.
+ * Netlify/Lambda gibi ortamlarda YouTube'un veri merkezi IP'lerini engelleyip
+ * engellemedigini 1-3 saniyede anlamak icin. Zaman asimina takilmaz.
+ */
+app.post("/api/check-captions", async (req, res) => {
+  const started = Date.now();
+  try {
+    const { videoInput } = req.body;
+    const ytId = extractYouTubeId(String(videoInput || '').trim());
+    if (!ytId) {
+      return res.status(400).json({ ok: false, error: "Gecerli bir YouTube linki gerekli." });
+    }
+
+    const cues = await fetchYoutubeCues(ytId);
+    const sentences = buildSentencesFromCues(cues);
+
+    res.json({
+      ok: true,
+      videoId: ytId,
+      cueCount: cues.length,
+      sentenceCount: sentences.length,
+      elapsedMs: Date.now() - started,
+      // Ilk 3 cumle: zaman damgalarinin makul olup olmadigini gozle dogrulamak icin
+      preview: sentences.slice(0, 3).map((s) => ({
+        timestamp: formatTimestamp(s.startSec || 0),
+        startSec: s.startSec,
+        en: s.en.slice(0, 90),
+      })),
+    });
+  } catch (error: any) {
+    console.error("Error in /api/check-captions:", error);
+    res.status(502).json({
+      ok: false,
+      elapsedMs: Date.now() - started,
+      error: error?.message || "Altyazi cekilemedi.",
+      hint: "Bu hata Netlify/Lambda uzerinde goruluyorsa YouTube veri merkezi IP'sini engelliyor olabilir.",
+    });
+  }
+});
+
 // 1. Extract / Process Bilingual Transcript (Katman 1)
 app.post("/api/extract-transcript", async (req, res) => {
   try {
@@ -836,9 +879,14 @@ Kullanıcı Sorusu: "${question}"
   }
 });
 
+// Netlify Functions ortaminda Express uygulamasi disaridan sarmalanir;
+// kendi portunu dinlemez ve statik dosyalari kendisi servis etmez.
+export { app };
+
 async function startServer() {
   // Serve Vite dev server or static dist
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -857,4 +905,8 @@ async function startServer() {
   });
 }
 
-startServer();
+// AI Studio / Cloud Run / yerel gelistirmede sunucuyu ayaga kaldir.
+// Netlify Functions altinda calisirken bu blok atlanir.
+if (!process.env.NETLIFY && !process.env.LAMBDA_TASK_ROOT) {
+  startServer();
+}
