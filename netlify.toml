@@ -1,1 +1,28 @@
+[build]
+  command = "vite build"
+  publish = "dist"
+  functions = "netlify/functions"
 
+[build.environment]
+  NODE_VERSION = "20"
+
+# /api/* isteklerini Express'i saran fonksiyona yonlendir
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# Tek sayfalik uygulama: diger tum yollar index.html'e
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"
+
+# Varsayilan 10 saniyedir. 26 saniye yalnizca Pro/Enterprise planda,
+# Netlify destegine talep acildiktan sonra etkinlesir.
+[functions."api"]
+  timeout = 26
