@@ -6,7 +6,11 @@ interface LessonSelectorProps {
   lessons: VideoLesson[];
   activeLesson?: VideoLesson | null;
   onSelectLesson: (lesson: VideoLesson) => void;
-  onImportCustomLesson: (input: string, youtubeUrl?: string) => Promise<void>;
+  onImportCustomLesson: (
+    input: string,
+    youtubeUrl?: string,
+    onProgress?: (message: string) => void
+  ) => Promise<void>;
   onDeleteLesson?: (lessonId: string) => void;
   onEditLesson?: (lesson: VideoLesson) => void;
   onRestorePresetLessons?: () => void;
@@ -27,6 +31,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
   const [textInput, setTextInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [progressMsg, setProgressMsg] = useState('');
   const [showImportForm, setShowImportForm] = useState(false);
 
   const handleImport = async (e: React.FormEvent) => {
@@ -35,21 +40,28 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
       if (!youtubeInput.trim()) return;
       setIsLoading(true);
       setErrorMsg('');
+      setProgressMsg('Başlatılıyor...');
       try {
-        await onImportCustomLesson(youtubeInput.trim());
+        await onImportCustomLesson(youtubeInput.trim(), undefined, setProgressMsg);
         setYoutubeInput('');
         setShowImportForm(false);
       } catch (err: any) {
         setErrorMsg(err.message || 'Video işlenirken hata oluştu.');
       } finally {
         setIsLoading(false);
+        setProgressMsg('');
       }
     } else {
       if (!textInput.trim()) return;
       setIsLoading(true);
       setErrorMsg('');
+      setProgressMsg('Başlatılıyor...');
       try {
-        await onImportCustomLesson(textInput.trim(), manualYoutubeUrl.trim() || youtubeInput.trim());
+        await onImportCustomLesson(
+          textInput.trim(),
+          manualYoutubeUrl.trim() || youtubeInput.trim(),
+          setProgressMsg
+        );
         setTextInput('');
         setManualYoutubeUrl('');
         setYoutubeInput('');
@@ -58,6 +70,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
         setErrorMsg(err.message || 'Metin işlenirken hata oluştu.');
       } finally {
         setIsLoading(false);
+        setProgressMsg('');
       }
     }
   };
@@ -159,7 +172,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Altyazılar Çekiliyor...</span>
+                      <span>{progressMsg || 'Altyazılar Çekiliyor...'}</span>
                     </>
                   ) : (
                     <>
@@ -213,7 +226,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Metin İşleniyor...</span>
+                      <span>{progressMsg || 'Metin İşleniyor...'}</span>
                     </>
                   ) : (
                     <>
