@@ -1,0 +1,6 @@
+{
+  "name": "Katmanlı Çalışma - Dil Koçu",
+  "description": "7 Katmanlı Çalışma metodu ile YouTube videoları üzerinden adım adım İngilizce öğrenme ve Gemini AI Dil Koçluğu platformu.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
