@@ -21,6 +21,181 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
+/* ============================================================
+   YOUTUBE ALTYAZI (CUE) İŞLEME
+   ------------------------------------------------------------
+   KRİTİK NOT: youtube-transcript kütüphanesi iki farklı XML
+   formatı parse ediyor:
+     - srv3   <p t="65000" d="3000">        -> offset MİLİSANİYE
+     - klasik <text start="65.0" dur="3.0"> -> offset SANİYE
+   Eski kod her ikisini de saniye sayıyordu; 1:05'teki bir cümle
+   1083:20 olarak damgalanıyor ve senkronizasyon tamamen bozuluyordu.
+   ============================================================ */
+
+interface Cue {
+  text: string;
+  startSec: number;
+  endSec: number;
+}
+
+interface BuiltSentence {
+  id: number;
+  en: string;
+  startSec?: number;
+  endSec?: number;
+  timestamp?: string;
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+/** Cue listesinin birimini tespit edip her zaman SANİYE'ye normalize eder. */
+function normalizeCues(items: any[]): Cue[] {
+  const offsets = items.map((i) => Number(i.offset) || 0);
+  const durations = items.map((i) => Number(i.duration) || 0);
+
+  const allIntegerOffsets = offsets.every((o) => Number.isInteger(o));
+  const sortedDur = [...durations].sort((a, b) => a - b);
+  const medianDuration = sortedDur[Math.floor(sortedDur.length / 2)] || 0;
+  const maxOffset = offsets.length ? Math.max(...offsets) : 0;
+
+  // Bir altyazı satırı 100 saniye sürmez, 10 saatlik offset de olmaz -> ms demektir.
+  const looksLikeMilliseconds =
+    (allIntegerOffsets && medianDuration > 100) || maxOffset > 36000;
+
+  const divisor = looksLikeMilliseconds ? 1000 : 1;
+
+  console.log(
+    `[Transcript] ${items.length} cue alindi. Birim: ${looksLikeMilliseconds ? 'MILISANIYE' : 'SANIYE'} (medyan sure: ${medianDuration})`
+  );
+
+  const cues: Cue[] = [];
+  for (const item of items) {
+    const rawText = decodeEntities(String(item.text || '')).replace(/\s+/g, ' ').trim();
+    if (!rawText) continue;
+
+    const startSec = (Number(item.offset) || 0) / divisor;
+    const durSec = (Number(item.duration) || 0) / divisor;
+
+    cues.push({
+      text: rawText,
+      startSec: Math.max(0, startSec),
+      endSec: Math.max(0, startSec + (durSec > 0 ? durSec : 2)),
+    });
+  }
+
+  cues.sort((a, b) => a.startSec - b.startSec);
+  return cues;
+}
+
+/** İngilizce altyazıyı dil tercihine göre sırayla dener. */
+async function fetchYoutubeCues(videoId: string): Promise<Cue[]> {
+  const langAttempts: (string | undefined)[] = ['en', 'en-US', 'en-GB', undefined];
+  let lastError: any = null;
+
+  for (const lang of langAttempts) {
+    try {
+      const items = await YoutubeTranscript.fetchTranscript(
+        videoId,
+        lang ? { lang } : undefined
+      );
+      if (items && items.length > 0) return normalizeCues(items);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Altyazi bulunamadi.');
+}
+
+/**
+ * Ham cue'lari anlamli cumlelere birlestirir.
+ * ZAMAN DAMGASI YAPAY ZEKAYA HESAPLATILMAZ; her cumlenin baslangici,
+ * o cumleyi baslatan cue'nun GERCEK zamanidir.
+ */
+function buildSentencesFromCues(cues: Cue[]): BuiltSentence[] {
+  const sentences: BuiltSentence[] = [];
+
+  let buffer = '';
+  let startSec: number | null = null;
+  let endSec = 0;
+  let previousCueEnd = 0;
+
+  const flush = () => {
+    const text = buffer.replace(/\s+/g, ' ').trim();
+    if (text && startSec !== null) {
+      sentences.push({
+        id: sentences.length + 1,
+        en: text,
+        startSec: Number(startSec.toFixed(2)),
+        endSec: Number(Math.max(endSec, startSec + 0.5).toFixed(2)),
+      });
+    }
+    buffer = '';
+    startSec = null;
+  };
+
+  for (const cue of cues) {
+    const text = cue.text.replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+
+    // Otomatik altyazilardaki tekrar eden (rolling) satirlari atla
+    if (buffer && buffer.toLowerCase().endsWith(text.toLowerCase())) {
+      previousCueEnd = cue.endSec;
+      continue;
+    }
+
+    const gap = startSec === null ? 0 : cue.startSec - previousCueEnd;
+
+    // Uzun sessizlikten sonra ve elde yeterli metin varsa cumleyi kapat
+    if (buffer.length > 60 && gap > 1.2) flush();
+
+    if (startSec === null) startSec = cue.startSec;
+    buffer += (buffer ? ' ' : '') + text;
+    endSec = cue.endSec;
+    previousCueEnd = cue.endSec;
+
+    const endsWithPunctuation = /[.!?\u2026]["'\u2019\u201d)\]]?$/.test(text);
+    if (endsWithPunctuation || buffer.length > 240) flush();
+  }
+
+  flush();
+  return sentences;
+}
+
+/** Elle yapistirilan metni cumlelere boler (gercek zaman bilgisi yoktur). */
+function buildSentencesFromPlainText(raw: string): BuiltSentence[] {
+  const cleaned = raw
+    .replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parts = cleaned.match(/[^.!?\u2026]+[.!?\u2026]+["'\u2019\u201d)\]]?|\S[^.!?\u2026]*$/g) || [];
+
+  return parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 1)
+    .map((p, i) => ({ id: i + 1, en: p }));
+}
+
+function formatTimestamp(totalSeconds: number): string {
+  const total = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const mm = minutes.toString().padStart(2, '0');
+  const ss = seconds.toString().padStart(2, '0');
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 // Helper to instantiate Gemini AI
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -112,87 +287,31 @@ Temel Kuralların:
 
 // API Endpoints
 
-// 1. Extract / Process Bilingual Transcript (Katman 1)
-app.post("/api/extract-transcript", async (req, res) => {
-  try {
-    const { videoInput, youtubeUrl } = req.body;
-    if (!videoInput || !videoInput.trim()) {
-      return res.status(400).json({ error: "Video linki veya metin gereklidir." });
-    }
+/**
+ * Cumleleri PARCA PARCA cevirir. Boylece uzun videolarda JSON kesilmez,
+ * model cumleleri yeniden bolemez ve id eslesmesi sayesinde zaman damgalari korunur.
+ */
+async function translateSentencesInBatches(
+  ai: GoogleGenAI,
+  sentences: BuiltSentence[]
+): Promise<Record<number, string>> {
+  const BATCH_SIZE = 30;
+  const translations: Record<number, string> = {};
 
-    const inputTrimmed = videoInput.trim();
-    let ytId = extractYouTubeId(inputTrimmed);
-    const providedYtId = youtubeUrl ? extractYouTubeId(youtubeUrl.trim()) : '';
+  for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+    const chunk = sentences.slice(i, i + BATCH_SIZE);
+    const numbered = chunk.map((s) => `${s.id}. ${s.en}`).join('\n');
 
-    let rawText = inputTrimmed;
-    let fetchedTitle = "";
+    const prompt = `Asagida numaralandirilmis Ingilizce cumleler var.
+Her cumlenin DOGAL ve AKICI Turkce cevirisini yap.
 
-    // If a separate youtubeUrl was provided alongside manual text
-    const activeYtId = ytId || providedYtId;
+KESIN KURALLAR:
+- Cumleleri BIRLESTIRME, BOLME veya ATLAMA. Kac cumle verildiyse o kadar ceviri dondur.
+- Her ceviriyi kendi "id" numarasiyla eslestir.
+- Ceviri disinda hicbir sey ekleme.
 
-    if (activeYtId) {
-      // Fetch title via oEmbed
-      try {
-        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${activeYtId}&format=json`);
-        if (oembedRes.ok) {
-          const oembedData: any = await oembedRes.json();
-          if (oembedData.title) {
-            fetchedTitle = oembedData.title;
-          }
-        }
-      } catch (e) {
-        console.warn("Could not fetch YouTube title via oEmbed:", e);
-      }
-    }
-
-    // Only fetch YouTube transcript if user provided ONLY a YouTube URL (ytId exists on inputTrimmed and no separate manual text)
-    if (ytId && (!youtubeUrl || !youtubeUrl.trim())) {
-      try {
-        const transcriptItems = await YoutubeTranscript.fetchTranscript(ytId);
-        if (transcriptItems && transcriptItems.length > 0) {
-          const formattedTranscript = transcriptItems.map((item: any) => {
-            const totalSecs = Math.floor(item.offset || 0);
-            const m = Math.floor(totalSecs / 60).toString().padStart(2, '0');
-            const s = Math.floor(totalSecs % 60).toString().padStart(2, '0');
-            return `[${m}:${s}] ${item.text}`;
-          }).join("\n");
-          rawText = formattedTranscript;
-        } else {
-          return res.status(400).json({
-            error: "Bu YouTube videosunun altyazı metni otomatik çekilemedi. Lütfen 'İngilizce Metin / Transkript Yapıştır' seçeneğini kullanarak videonun İngilizce metnini manuel yapıştırın ve üstteki YouTube link alanına video linkini ekleyin."
-          });
-        }
-      } catch (err: any) {
-        console.error("YoutubeTranscript error:", err?.message || err);
-        return res.status(400).json({
-          error: "Bu YouTube videosunun altyazısı (CC) bulunamadı veya erişime kapalı. Lütfen 'İngilizce Metin / Transkript Yapıştır' sekmesini seçip videonun linkini ve transkriptini manuel yapıştırarak ders oluşturun."
-        });
-      }
-    }
-
-    const ai = getGeminiClient();
-    const prompt = `Sen Katmanlı Çalışma (Layered Learning) metodolojisinde uzman İngilizce öğretmenisin.
-Aşağıda verilen GERÇEK konuşma metnini/transkriptini incele ve ilk 3 katman için tüm verileri TEK SEFERDE eksiksiz oluştur.
-
-GERÇEK METİN (Varsa [mm:ss] şeklinde YouTube altyazı zaman damgaları içerir):
-"${rawText.slice(0, 10000)}"
-
-TALİMATLAR:
-1. KATMAN (Çift Dilli Metin):
-- Metindeki İngilizce cümleleri bozmadan, konuşma akışındaki gibi anlamlı cümle parçalarına ayır ("sentences").
-- Her cümlenin başladığı anı temsil eden GERÇEK zaman damgasını ("timestamp", örn: "00:00", "00:07", "00:18", "00:32", "01:05") ekle. Metinde [mm:ss] zaman damgaları varsa BİREBİR veya en yakın gerçek cümlenin başlama zamanını kullan. Eğer zaman damgası yoksa konuşma hızına göre ortalama (her 6-10 saniyede bir) gerçekçi zaman damgaları hesapla.
-- Her İngilizce cümlenin karşısına doğal, akıcı Türkçe çevirisini yaz.
-- Metindeki sırayı %100 koru.
-
-2. KATMAN (Fonetik ve Gramer Analizi):
-- "vocabulary": Metinde geçen 6-10 kritik B2/C1 kelime/phrasal verb, IPA okunuşları, Türkçe anlamı, telaffuz ipucu ve örnek cümle.
-- "grammarRules": Metinde tespit edilen gramer/dil yapılarını "Genelden Özele" mantığıyla Türkçe açıkla. ÖNEMLİ: Gramer konusunda metinde geçen ve günlük hayatta kullanılan TÜM ilgili örnek cümleleri getir (sadece 3 tane ile sınırlama, o yapıya uyan 5-10 tüm örnek cümleleri kapsayıcı şekilde listele).
-
-3. KATMAN (Anlama Kontrolü / Quiz):
-- "quizQuestions": Metnin ana hatlarını ve detaylarını test eden 5 İngilizce soru hazırla.
-- 3 tanesi Multiple Choice (Çoktan Seçmeli: 4 şıklı "options", "correctOptionIndex" 0-3 arası, "explanationTr"), 2 tanesi Open-ended (Açık uçlu: "sampleAnswerEn", "explanationTr").
-
-Başlık: Metne/videoya uygun kısa ve öz bir başlık ("title": "${fetchedTitle || 'Video Transkripti'}").`;
+CUMLELER:
+${numbered}`;
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
@@ -202,95 +321,228 @@ Başlık: Metne/videoya uygun kısa ve öz bir başlık ("title": "${fetchedTitl
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING },
-            sentences: {
+            translations: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
                   id: { type: Type.INTEGER },
-                  timestamp: { type: Type.STRING },
-                  en: { type: Type.STRING },
-                  tr: { type: Type.STRING }
+                  tr: { type: Type.STRING },
                 },
-                required: ["id", "en", "tr"]
-              }
+                required: ["id", "tr"],
+              },
             },
-            vocabulary: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: { type: Type.STRING },
-                  type: { type: Type.STRING },
-                  ipa: { type: Type.STRING },
-                  meaningTr: { type: Type.STRING },
-                  pronunciationNote: { type: Type.STRING },
-                  exampleSentence: { type: Type.STRING }
-                },
-                required: ["word", "meaningTr", "pronunciationNote"]
-              }
-            },
-            grammarRules: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  topic: { type: Type.STRING },
-                  explanationTr: { type: Type.STRING },
-                  examples: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        en: { type: Type.STRING },
-                        tr: { type: Type.STRING }
-                      },
-                      required: ["en", "tr"]
-                    }
-                  }
-                },
-                required: ["topic", "explanationTr", "examples"]
-              }
-            },
-            quizQuestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.INTEGER },
-                  type: { type: Type.STRING },
-                  question: { type: Type.STRING },
-                  options: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  correctOptionIndex: { type: Type.INTEGER },
-                  sampleAnswerEn: { type: Type.STRING },
-                  explanationTr: { type: Type.STRING }
-                },
-                required: ["id", "type", "question", "explanationTr"]
-              }
-            }
           },
-          required: ["title", "sentences", "vocabulary", "grammarRules", "quizQuestions"]
-        }
-      }
+          required: ["translations"],
+        },
+      },
     });
 
-    const data = JSON.parse(response.text || "{}");
-    if (!data.sentences || data.sentences.length === 0) {
-      return res.status(500).json({ error: "Cümleler ayrıştırılamadı." });
+    try {
+      const parsed = JSON.parse(response.text || "{}");
+      const list = Array.isArray(parsed.translations) ? parsed.translations : [];
+      for (const item of list) {
+        if (typeof item?.id === 'number' && typeof item?.tr === 'string') {
+          translations[item.id] = item.tr;
+        }
+      }
+    } catch (e) {
+      console.warn(`[Translate] ${i}-${i + BATCH_SIZE} araligi parse edilemedi:`, e);
+    }
+  }
+
+  return translations;
+}
+
+/** Kelime, gramer ve quiz verilerini tek cagrida uretir. */
+async function generateStudyMaterial(ai: GoogleGenAI, fullText: string) {
+  const prompt = `Asagidaki Ingilizce konusma metnini incele ve ogrenme materyali uret.
+
+METIN:
+"${fullText.slice(0, 14000)}"
+
+TALIMATLAR:
+1. "vocabulary": Metinde gecen 6-10 kritik B2/C1 kelime/phrasal verb, IPA okunusu, Turkce anlami, telaffuz ipucu ve ornek cumle.
+2. "grammarRules": Metinde tespit edilen gramer yapilarini "Genelden Ozele" mantigiyla Turkce acikla. Her yapi icin 5-10 ornek cumle ve Turkce karsiliklari.
+3. "quizQuestions": Metni test eden 5 Ingilizce soru. 3 tanesi coktan secmeli (4 sikli "options", "correctOptionIndex" 0-3, "explanationTr"), 2 tanesi acik uclu ("sampleAnswerEn", "explanationTr").`;
+
+  const response = await generateContentWithRetry(ai, {
+    contents: prompt,
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION_COACH,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          vocabulary: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                word: { type: Type.STRING },
+                type: { type: Type.STRING },
+                ipa: { type: Type.STRING },
+                meaningTr: { type: Type.STRING },
+                pronunciationNote: { type: Type.STRING },
+                exampleSentence: { type: Type.STRING }
+              },
+              required: ["word", "meaningTr", "pronunciationNote"]
+            }
+          },
+          grammarRules: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                topic: { type: Type.STRING },
+                explanationTr: { type: Type.STRING },
+                examples: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      en: { type: Type.STRING },
+                      tr: { type: Type.STRING }
+                    },
+                    required: ["en", "tr"]
+                  }
+                }
+              },
+              required: ["topic", "explanationTr", "examples"]
+            }
+          },
+          quizQuestions: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.INTEGER },
+                type: { type: Type.STRING },
+                question: { type: Type.STRING },
+                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                correctOptionIndex: { type: Type.INTEGER },
+                sampleAnswerEn: { type: Type.STRING },
+                explanationTr: { type: Type.STRING }
+              },
+              required: ["id", "type", "question", "explanationTr"]
+            }
+          }
+        },
+        required: ["vocabulary", "grammarRules", "quizQuestions"]
+      }
+    }
+  });
+
+  try {
+    return JSON.parse(response.text || "{}");
+  } catch {
+    return { vocabulary: [], grammarRules: [], quizQuestions: [] };
+  }
+}
+
+// API Endpoints
+
+// 1. Extract / Process Bilingual Transcript (Katman 1)
+app.post("/api/extract-transcript", async (req, res) => {
+  try {
+    const { videoInput, youtubeUrl } = req.body;
+    if (!videoInput || !videoInput.trim()) {
+      return res.status(400).json({ error: "Video linki veya metin gereklidir." });
     }
 
-    res.json(data);
+    const inputTrimmed = videoInput.trim();
+    const ytIdFromInput = extractYouTubeId(inputTrimmed);
+    const ytIdFromUrlField = youtubeUrl ? extractYouTubeId(youtubeUrl.trim()) : '';
+    const activeYtId = ytIdFromInput || ytIdFromUrlField;
+
+    let fetchedTitle = "";
+    let sentences: BuiltSentence[] = [];
+    let hasRealTimings = false;
+    let syncNotice = "";
+
+    if (activeYtId) {
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${activeYtId}&format=json`);
+        if (oembedRes.ok) {
+          const oembedData: any = await oembedRes.json();
+          if (oembedData.title) fetchedTitle = oembedData.title;
+        }
+      } catch (e) {
+        console.warn("Could not fetch YouTube title via oEmbed:", e);
+      }
+    }
+
+    // Bir YouTube ID varsa HER ZAMAN gercek altyazi zamanlarini cekmeyi dene.
+    // Gercek cue zamanlari, senkronizasyonun tek dogru kaynagidir.
+    if (activeYtId) {
+      try {
+        const cues = await fetchYoutubeCues(activeYtId);
+        const built = buildSentencesFromCues(cues);
+        if (built.length > 0) {
+          sentences = built;
+          hasRealTimings = true;
+        }
+      } catch (err: any) {
+        console.warn("YoutubeTranscript error:", err?.message || err);
+      }
+    }
+
+    // Altyazi cekilemediyse elle yapistirilan metne dus
+    if (!hasRealTimings) {
+      const manualText = ytIdFromInput ? '' : inputTrimmed;
+      if (!manualText) {
+        return res.status(400).json({
+          error: "Bu YouTube videosunun altyazisi (CC) bulunamadi veya erisime kapali. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip videonun linkini ve transkriptini manuel yapistirarak ders olusturun."
+        });
+      }
+      sentences = buildSentencesFromPlainText(manualText);
+      syncNotice = "Bu ders elle yapistirilan metinden olusturuldu; YouTube altyazi zamanlari bulunamadigi icin cumle bazli otomatik senkronizasyon devre disi.";
+    }
+
+    if (sentences.length === 0) {
+      return res.status(500).json({ error: "Cumleler ayristirilamadi." });
+    }
+
+    // Goruntulenecek zaman damgasi metnini burada uret (model uretmez)
+    for (const s of sentences) {
+      if (typeof s.startSec === 'number') {
+        s.timestamp = formatTimestamp(s.startSec);
+      }
+    }
+
+    const ai = getGeminiClient();
+    const fullText = sentences.map((s) => s.en).join(' ');
+
+    const [translations, material] = await Promise.all([
+      translateSentencesInBatches(ai, sentences),
+      generateStudyMaterial(ai, fullText),
+    ]);
+
+    const finalSentences = sentences.map((s) => ({
+      id: s.id,
+      en: s.en,
+      tr: translations[s.id] || '',
+      startSec: s.startSec,
+      endSec: s.endSec,
+      timestamp: s.timestamp,
+    }));
+
+    res.json({
+      title: fetchedTitle || "Video Transkripti",
+      sentences: finalSentences,
+      vocabulary: material.vocabulary || [],
+      grammarRules: material.grammarRules || [],
+      quizQuestions: material.quizQuestions || [],
+      hasRealTimings,
+      syncNotice,
+    });
   } catch (error: any) {
     console.error("Error in /api/extract-transcript:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
     const statusCode = isQuota ? 429 : 500;
-    const msg = isQuota 
-      ? "Yapay zeka istek limitine (Rate Limit) ulaşıldı. Lütfen 30 saniye sonra tekrar deneyin."
-      : formatErrorMessage(error, "Transkript işlenirken hata oluştu.");
+    const msg = isQuota
+      ? "Yapay zeka istek limitine (Rate Limit) ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+      : formatErrorMessage(error, "Transkript islenirken hata olustu.");
     res.status(statusCode).json({ error: msg });
   }
 });
@@ -415,7 +667,11 @@ JSON Formatı:
       }
     });
 
-    res.json(JSON.parse(response.text || "{}"));
+    const parsedQuiz = JSON.parse(response.text || "{}");
+    const quizList = parsedQuiz.quizQuestions || parsedQuiz.questions || [];
+    // App.tsx "quizQuestions" okuyor, prompt "questions" uretiyordu.
+    // Arka planda uretilen quiz bu yuzden bos kaliyordu; iki anahtari da donduruyoruz.
+    res.json({ quizQuestions: quizList, questions: quizList });
   } catch (error: any) {
     console.error("Error in /api/generate-quiz:", error);
     const isQuota = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || JSON.stringify(error).includes("429");
