@@ -134,18 +134,112 @@ export default function App() {
     }
   };
 
-  // Custom Video Import Handler
-  const handleImportCustomLesson = async (input: string, youtubeUrlInput?: string) => {
-    const res = await fetch('/api/extract-transcript', {
+/**
+ * Sunucudan gelen yaniti guvenle okur. Netlify zaman asiminda JSON yerine
+ * HTML hata sayfasi donuyor ve JSON.parse "Unexpected token '<'" hatasi
+ * veriyordu. Burada anlasilir bir mesaja cevriliyor.
+ */
+async function readJsonResponse(res: Response, fallbackMsg: string): Promise<any> {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    if (res.status === 502 || res.status === 504 || /timed?\s*out|gateway/i.test(raw)) {
+      throw new Error(
+        'Sunucu zaman asimina ugradi. Video cok uzun olabilir; daha kisa bir videoyla deneyin.'
+      );
+    }
+    throw new Error(`${fallbackMsg} (HTTP ${res.status})`);
+  }
+}
+
+/** Frontend'in cagirdigi grup boyutu. Her istek birkac saniyede biter. */
+const TRANSLATE_BATCH_SIZE = 20;
+
+/**
+ * Dersi PARCA PARCA olusturur: once cumleler ve gercek zaman damgalari,
+ * sonra sirayla ceviri gruplari, en son ogrenme materyali. Boylece hicbir
+ * istek serverless zaman sinirina takilmaz.
+ */
+async function buildLessonData(
+  input: string,
+  youtubeUrlInput?: string,
+  onProgress?: (message: string) => void
+) {
+  onProgress?.('Altyazi aliniyor...');
+
+  const sentRes = await fetch('/api/transcript-sentences', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoInput: input, youtubeUrl: youtubeUrlInput }),
+  });
+  const sentData = await readJsonResponse(sentRes, 'Transkript alinamadi.');
+  if (!sentRes.ok) throw new Error(sentData.error || 'Transkript alinamadi.');
+
+  const sentences: any[] = sentData.sentences || [];
+  if (sentences.length === 0) throw new Error('Transkriptten cumle cikarilamadi.');
+
+  // Ceviriyi gruplar halinde, sirayla iste
+  const translations: Record<number, string> = {};
+  const totalBatches = Math.ceil(sentences.length / TRANSLATE_BATCH_SIZE);
+
+  for (let i = 0; i < sentences.length; i += TRANSLATE_BATCH_SIZE) {
+    const batchNo = Math.floor(i / TRANSLATE_BATCH_SIZE) + 1;
+    onProgress?.(`Ceviriliyor... (${batchNo}/${totalBatches})`);
+
+    const chunk = sentences
+      .slice(i, i + TRANSLATE_BATCH_SIZE)
+      .map((s) => ({ id: s.id, en: s.en }));
+
+    const trRes = await fetch('/api/translate-batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoInput: input, youtubeUrl: youtubeUrlInput }),
+      body: JSON.stringify({ sentences: chunk }),
     });
+    const trData = await readJsonResponse(trRes, 'Ceviri yapilamadi.');
+    if (!trRes.ok) throw new Error(trData.error || 'Ceviri yapilamadi.');
 
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Video transkripti çıkarılamadı.');
-    }
+    Object.assign(translations, trData.translations || {});
+  }
+
+  const finalSentences = sentences.map((s) => ({
+    ...s,
+    tr: translations[s.id] || '',
+  }));
+
+  // Ogrenme materyali: basarisiz olursa ders yine de olusur,
+  // eksik katmanlar arka planda tamamlanir.
+  let material: any = {};
+  try {
+    onProgress?.('Kelime, gramer ve quiz hazirlaniyor...');
+    const fullText = sentences.map((s) => s.en).join(' ');
+    const matRes = await fetch('/api/study-material', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: fullText }),
+    });
+    if (matRes.ok) material = await readJsonResponse(matRes, '');
+  } catch (e) {
+    console.warn('Ogrenme materyali uretilemedi, arka planda tekrar denenecek:', e);
+  }
+
+  return {
+    title: sentData.title,
+    sentences: finalSentences,
+    hasRealTimings: !!sentData.hasRealTimings,
+    vocabulary: material.vocabulary || [],
+    grammarRules: material.grammarRules || [],
+    quizQuestions: material.quizQuestions || [],
+  };
+}
+
+  // Custom Video Import Handler
+  const handleImportCustomLesson = async (
+    input: string,
+    youtubeUrlInput?: string,
+    onProgress?: (message: string) => void
+  ) => {
+    const data = await buildLessonData(input, youtubeUrlInput, onProgress);
 
     const activeYtUrl = (youtubeUrlInput && youtubeUrlInput.trim()) ? youtubeUrlInput.trim() : input;
     const ytId = extractYouTubeId(activeYtUrl);
@@ -155,11 +249,12 @@ export default function App() {
       title: data.title || 'Yeni İçe Aktarılan Video',
       youtubeUrl: activeYtUrl,
       youtubeId: ytId,
-      description: 'Gemini AI tarafından otomatik olarak çıkarılan çift dilli transkript.',
+      description: 'YouTube altyazısından otomatik oluşturulan çift dilli transkript.',
       level: 'B2',
       durationMinutes: 8,
       completedLayers: [],
       sentences: data.sentences || [],
+      hasRealTimings: data.hasRealTimings,
       vocabulary: data.vocabulary || [],
       grammarRules: data.grammarRules || [],
       quizQuestions: data.quizQuestions || [],
@@ -229,7 +324,10 @@ export default function App() {
    * GERÇEK YouTube altyazısından yeniden üretir. Cümleler ve zaman
    * damgaları sunucuda gerçek cue verisinden hesaplanır.
    */
-  const handleResyncLessonFromCaptions = async (lessonId: string) => {
+  const handleResyncLessonFromCaptions = async (
+    lessonId: string,
+    onProgress?: (message: string) => void
+  ) => {
     const target = lessons.find((l) => l.id === lessonId);
     if (!target) throw new Error('Ders bulunamadı.');
 
@@ -238,14 +336,8 @@ export default function App() {
       throw new Error('Bu derste geçerli bir YouTube linki yok. Önce "URL Değiştir" ile link ekleyin.');
     }
 
-    const res = await fetch('/api/extract-transcript', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoInput: url }),
-    });
+    const data = await buildLessonData(url, undefined, onProgress);
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Altyazı çekilemedi.');
     if (!data.hasRealTimings) {
       throw new Error('Bu videoda zaman bilgisi içeren bir altyazı bulunamadı.');
     }
@@ -375,7 +467,7 @@ export default function App() {
                   bookmarkedWords={progress.bookmarkedWords}
                   onCompleteLayer={() => handleCompleteLayer(1)}
                   onUpdateVideoUrl={handleUpdateLessonVideoUrl}
-                  onResyncFromCaptions={() => handleResyncLessonFromCaptions(activeLesson.id)}
+                  onResyncFromCaptions={(onProgress) => handleResyncLessonFromCaptions(activeLesson.id, onProgress)}
                 />
               )}
 
