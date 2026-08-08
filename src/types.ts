@@ -2,7 +2,12 @@ export interface SentencePair {
   id: number;
   en: string;
   tr: string;
+  /** Görüntüleme amaçlı zaman etiketi, örn. "01:23" */
   timestamp?: string;
+  /** YouTube altyazısından gelen GERÇEK başlangıç saniyesi. Senkronizasyonun tek kaynağı. */
+  startSec?: number;
+  /** Cümlenin bittiği saniye. */
+  endSec?: number;
   notes?: string;
 }
 
@@ -70,6 +75,8 @@ export interface VideoLesson {
   userSummary?: string;
   userComment?: string;
   completedLayers: number[]; // e.g. [1, 2, 3]
+  /** true ise cümlelerde YouTube'dan gelen gerçek zaman bilgisi var. */
+  hasRealTimings?: boolean;
 }
 
 export interface UserProgress {
