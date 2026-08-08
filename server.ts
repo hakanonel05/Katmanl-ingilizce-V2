@@ -397,24 +397,17 @@ Temel Kuralların:
 // API Endpoints
 
 /**
- * Cumleleri PARCA PARCA cevirir. Boylece uzun videolarda JSON kesilmez,
- * model cumleleri yeniden bolemez ve id eslesmesi sayesinde zaman damgalari korunur.
+ * TEK bir cumle grubunu cevirir. Zaman damgalari sunucuda hesaplandigi ve
+ * eslesme "id" uzerinden yapildigi icin model cumleleri bolse bile senkron bozulmaz.
  */
-async function translateSentencesInBatches(
+async function translateChunk(
   ai: GoogleGenAI | null,
-  sentences: BuiltSentence[]
+  chunk: { id: number; en: string }[]
 ): Promise<Record<number, string>> {
-  const BATCH_SIZE = 30;
   const translations: Record<number, string> = {};
+  const numbered = chunk.map((s) => `${s.id}. ${s.en}`).join('\n');
 
-  for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
-    // Ilk gruptan sonra kisa bir nefes: dakikalik token kotasini korur.
-    if (i > 0) await sleep(1500);
-
-    const chunk = sentences.slice(i, i + BATCH_SIZE);
-    const numbered = chunk.map((s) => `${s.id}. ${s.en}`).join('\n');
-
-    const prompt = `Asagida numaralandirilmis Ingilizce cumleler var.
+  const prompt = `Asagida numaralandirilmis Ingilizce cumleler var.
 Her cumlenin DOGAL ve AKICI Turkce cevirisini yap.
 
 KESIN KURALLAR:
@@ -425,43 +418,62 @@ KESIN KURALLAR:
 CUMLELER:
 ${numbered}`;
 
-    const response = await generateContentWithRetry(ai, {
-      contents: prompt,
-      jsonHint: '{"translations":[{"id":1,"tr":"Turkce ceviri"}]}',
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION_COACH,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            translations: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.INTEGER },
-                  tr: { type: Type.STRING },
-                },
-                required: ["id", "tr"],
+  const response = await generateContentWithRetry(ai, {
+    contents: prompt,
+    jsonHint: '{"translations":[{"id":1,"tr":"Turkce ceviri"}]}',
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION_COACH,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          translations: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.INTEGER },
+                tr: { type: Type.STRING },
               },
+              required: ["id", "tr"],
             },
           },
-          required: ["translations"],
         },
+        required: ["translations"],
       },
-    });
+    },
+  });
 
-    try {
-      const parsed = JSON.parse(response.text || "{}");
-      const list = Array.isArray(parsed.translations) ? parsed.translations : [];
-      for (const item of list) {
-        if (typeof item?.id === 'number' && typeof item?.tr === 'string') {
-          translations[item.id] = item.tr;
-        }
+  try {
+    const parsed = JSON.parse(response.text || "{}");
+    const list = Array.isArray(parsed.translations) ? parsed.translations : [];
+    for (const item of list) {
+      if (typeof item?.id === 'number' && typeof item?.tr === 'string') {
+        translations[item.id] = item.tr;
       }
-    } catch (e) {
-      console.warn(`[Translate] ${i}-${i + BATCH_SIZE} araligi parse edilemedi:`, e);
     }
+  } catch (e) {
+    console.warn('[Translate] Grup parse edilemedi:', e);
+  }
+
+  return translations;
+}
+
+/**
+ * Tum cumleleri gruplar halinde cevirir (tek istekte calisan eski akis icin).
+ * Netlify'da bu yol zaman asimina ugrar; frontend parcali uc noktalari kullanir.
+ */
+async function translateSentencesInBatches(
+  ai: GoogleGenAI | null,
+  sentences: BuiltSentence[]
+): Promise<Record<number, string>> {
+  const BATCH_SIZE = 30;
+  let translations: Record<number, string> = {};
+
+  for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+    if (i > 0) await sleep(1500);
+    const chunk = sentences.slice(i, i + BATCH_SIZE);
+    translations = { ...translations, ...(await translateChunk(ai, chunk)) };
   }
 
   return translations;
@@ -699,6 +711,135 @@ app.post("/api/extract-transcript", async (req, res) => {
       ? "Yapay zeka istek limitine (Rate Limit) ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
       : formatErrorMessage(error, "Transkript islenirken hata olustu.");
     res.status(statusCode).json({ error: msg });
+  }
+});
+
+/* ============================================================
+   PARCALI AKIS (Netlify / serverless icin)
+   ------------------------------------------------------------
+   /api/extract-transcript tek istekte her seyi yapiyor ve uzun
+   videolarda Netlify'in 10 saniyelik fonksiyon sinirini asiyor.
+   Asagidaki uc uc nokta isi kucuk parcalara boler; her biri
+   birkac saniyede biter. Frontend bunlari sirayla cagirir.
+   ============================================================ */
+
+// 1a. Sadece cumleleri ve gercek zaman damgalarini dondurur. Yapay zeka cagrilmaz.
+app.post("/api/transcript-sentences", async (req, res) => {
+  try {
+    const { videoInput, youtubeUrl } = req.body;
+    if (!videoInput || !videoInput.trim()) {
+      return res.status(400).json({ error: "Video linki veya metin gereklidir." });
+    }
+
+    const inputTrimmed = videoInput.trim();
+    const ytIdFromInput = extractYouTubeId(inputTrimmed);
+    const ytIdFromUrlField = youtubeUrl ? extractYouTubeId(youtubeUrl.trim()) : '';
+    const activeYtId = ytIdFromInput || ytIdFromUrlField;
+
+    let fetchedTitle = "";
+    let sentences: BuiltSentence[] = [];
+    let hasRealTimings = false;
+    let syncNotice = "";
+
+    if (activeYtId) {
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${activeYtId}&format=json`);
+        if (oembedRes.ok) {
+          const oembedData: any = await oembedRes.json();
+          if (oembedData.title) fetchedTitle = oembedData.title;
+        }
+      } catch (e) {
+        console.warn("oEmbed basarisiz:", e);
+      }
+
+      try {
+        const cues = await fetchYoutubeCues(activeYtId);
+        const built = buildSentencesFromCues(cues);
+        if (built.length > 0) {
+          sentences = built;
+          hasRealTimings = true;
+        }
+      } catch (err: any) {
+        console.warn("YoutubeTranscript error:", err?.message || err);
+      }
+    }
+
+    if (!hasRealTimings) {
+      const manualText = ytIdFromInput ? '' : inputTrimmed;
+      if (!manualText) {
+        return res.status(400).json({
+          error: "Bu YouTube videosunun altyazisi (CC) bulunamadi veya erisime kapali. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip metni manuel yapistirin."
+        });
+      }
+      sentences = buildSentencesFromPlainText(manualText);
+      syncNotice = "Bu ders elle yapistirilan metinden olusturuldu; otomatik senkronizasyon devre disi.";
+    }
+
+    if (sentences.length === 0) {
+      return res.status(500).json({ error: "Cumleler ayristirilamadi." });
+    }
+
+    for (const s of sentences) {
+      if (typeof s.startSec === 'number') s.timestamp = formatTimestamp(s.startSec);
+    }
+
+    res.json({
+      title: fetchedTitle || "Video Transkripti",
+      sentences,
+      hasRealTimings,
+      syncNotice,
+    });
+  } catch (error: any) {
+    console.error("Error in /api/transcript-sentences:", error);
+    res.status(500).json({ error: formatErrorMessage(error, "Transkript alinamadi.") });
+  }
+});
+
+// 1b. Tek bir cumle grubunu cevirir. Frontend bunu sirayla cagirir.
+app.post("/api/translate-batch", async (req, res) => {
+  try {
+    const { sentences } = req.body;
+    if (!Array.isArray(sentences) || sentences.length === 0) {
+      return res.status(400).json({ error: "Cevrilecek cumle yok." });
+    }
+
+    const ai = getAIClient();
+    const translations = await translateChunk(ai, sentences);
+    res.json({ translations });
+  } catch (error: any) {
+    console.error("Error in /api/translate-batch:", error);
+    const isQuota = isRateLimitError(error);
+    res.status(isQuota ? 429 : 500).json({
+      error: isQuota
+        ? "Yapay zeka istek limitine ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+        : formatErrorMessage(error, "Ceviri yapilamadi."),
+    });
+  }
+});
+
+// 1c. Kelime, gramer ve quiz verilerini uretir.
+app.post("/api/study-material", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ error: "Metin gereklidir." });
+    }
+
+    const ai = getAIClient();
+    const material = await generateStudyMaterial(ai, String(text));
+    res.json({
+      vocabulary: material.vocabulary || [],
+      grammarRules: material.grammarRules || [],
+      quizQuestions: material.quizQuestions || [],
+    });
+  } catch (error: any) {
+    console.error("Error in /api/study-material:", error);
+    const isQuota = isRateLimitError(error);
+    res.status(isQuota ? 429 : 500).json({
+      error: isQuota
+        ? "Yapay zeka istek limitine ulasildi. Lutfen 30 saniye sonra tekrar deneyin."
+        : formatErrorMessage(error, "Ogrenme materyali uretilemedi."),
+    });
   }
 });
 
