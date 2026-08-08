@@ -198,6 +198,33 @@ function formatTimestamp(totalSeconds: number): string {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/* ============================================================
+   YAPAY ZEKA SAGLAYICI KATMANI
+   ------------------------------------------------------------
+   AI_PROVIDER ortam degiskeni ile saglayici secilir:
+     - "gemini" (varsayilan) -> Google Gemini
+     - "groq"                -> Groq uzerinden acik agirlikli modeller
+   Groq, OpenAI uyumlu bir uc nokta sundugu icin ek SDK gerekmez.
+   ============================================================ */
+
+const AI_PROVIDER = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
+
+// Groq model sirasi. Groq modelleri sik degisiyor; guncel liste:
+// https://console.groq.com/docs/models
+// 17 Haziran 2026'da llama-3.3-70b-versatile ve qwen/qwen3-32b kullanimdan
+// kaldirildi, yerlerine asagidakiler onerildi.
+const GROQ_MODELS = [
+  "openai/gpt-oss-120b",
+  "qwen/qwen3.6-27b",
+  "openai/gpt-oss-20b",
+];
+
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-2.0-flash",
+];
+
 // Helper to instantiate Gemini AI
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -214,48 +241,128 @@ function getGeminiClient() {
   });
 }
 
-// Robust Gemini generation with multi-model fallback and rate limit retries
+/** Groq secildiginde Gemini istemcisi gerekmez. */
+function getAIClient(): GoogleGenAI | null {
+  return AI_PROVIDER === 'groq' ? null : getGeminiClient();
+}
+
+function isRateLimitError(err: any): boolean {
+  const errStr = (err?.message || "") + JSON.stringify(err || {});
+  return (
+    err?.status === "RESOURCE_EXHAUSTED" ||
+    err?.code === 429 ||
+    err?.httpStatus === 429 ||
+    errStr.includes("429") ||
+    errStr.includes("RESOURCE_EXHAUSTED") ||
+    errStr.includes("rate_limit") ||
+    errStr.includes("quota")
+  );
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Groq'un OpenAI uyumlu sohbet ucunu cagirir. */
+async function callGroq(
+  model: string,
+  prompt: string,
+  systemInstruction: string,
+  jsonHint?: string
+): Promise<{ text: string }> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY environment variable is missing.");
+  }
+
+  const systemContent = jsonHint
+    ? `${systemInstruction}\n\nSADECE gecerli JSON dondur. Markdown, aciklama veya kod bloğu isareti ekleme. Kullanilacak sema:\n${jsonHint}`
+    : systemInstruction;
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.3,
+      ...(jsonHint ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text();
+    const error: any = new Error(`Groq ${res.status}: ${bodyText.slice(0, 300)}`);
+    error.httpStatus = res.status;
+    // 429 durumunda Groq, beklenmesi gereken sureyi bu baslikta bildirir
+    const retryAfter = res.headers.get("retry-after");
+    if (retryAfter) error.retryAfterMs = Math.ceil(parseFloat(retryAfter) * 1000);
+    throw error;
+  }
+
+  const data: any = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  return { text };
+}
+
+/**
+ * Saglayicidan bagimsiz uretim. Model listesi sirayla denenir; 429 durumunda
+ * ustel bekleme (exponential backoff) uygulanir ve varsa Retry-After basligina
+ * uyulur. Cagiranlar response.text okumaya devam edebilir.
+ */
 async function generateContentWithRetry(
-  ai: GoogleGenAI,
+  ai: GoogleGenAI | null,
   params: {
     contents: any;
     config?: any;
     primaryModel?: string;
+    /** Groq icin beklenen JSON semasinin kisa tarifi. Gemini bunu yok sayar. */
+    jsonHint?: string;
   }
-) {
-  const models = [
-    params.primaryModel || "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-  ];
+): Promise<{ text: string }> {
+  const useGroq = AI_PROVIDER === 'groq';
+  const models = useGroq
+    ? (params.primaryModel ? [params.primaryModel, ...GROQ_MODELS] : GROQ_MODELS)
+    : (params.primaryModel ? [params.primaryModel, ...GEMINI_MODELS] : GEMINI_MODELS);
 
   let lastError: any = null;
 
   for (const modelName of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const response = await ai.models.generateContent({
+        if (useGroq) {
+          return await callGroq(
+            modelName,
+            typeof params.contents === 'string' ? params.contents : JSON.stringify(params.contents),
+            params.config?.systemInstruction || '',
+            params.jsonHint || (params.config?.responseMimeType === 'application/json' ? '{}' : undefined)
+          );
+        }
+
+        const client = ai || getGeminiClient();
+        const response = await client.models.generateContent({
           model: modelName,
           contents: params.contents,
           config: params.config,
         });
-        return response;
+        return { text: response.text || "" };
       } catch (err: any) {
         lastError = err;
-        const errStr = (err?.message || "") + JSON.stringify(err);
-        const isRateLimit =
-          err?.status === "RESOURCE_EXHAUSTED" ||
-          err?.code === 429 ||
-          errStr.includes("429") ||
-          errStr.includes("RESOURCE_EXHAUSTED") ||
-          errStr.includes("quota");
 
-        if (isRateLimit) {
-          console.warn(`[Gemini API] Model ${modelName} attempt ${attempt + 1} rate limited (429). Waiting 2s...`);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (isRateLimitError(err)) {
+          // 2s, 6s, 14s ... veya sunucunun bildirdigi sure
+          const backoffMs = err?.retryAfterMs || (2000 * Math.pow(2, attempt) - 2000 + 2000);
+          console.warn(
+            `[AI] ${modelName} istegi limite takildi (429). ${backoffMs} ms bekleniyor (deneme ${attempt + 1}/3).`
+          );
+          await sleep(backoffMs);
         } else {
-          console.warn(`[Gemini API] Model ${modelName} error:`, err?.message || err);
-          break; // Try next fallback model
+          console.warn(`[AI] ${modelName} hatasi:`, err?.message || err);
+          break; // Sonraki modele gec
         }
       }
     }
@@ -294,13 +401,16 @@ Temel Kuralların:
  * model cumleleri yeniden bolemez ve id eslesmesi sayesinde zaman damgalari korunur.
  */
 async function translateSentencesInBatches(
-  ai: GoogleGenAI,
+  ai: GoogleGenAI | null,
   sentences: BuiltSentence[]
 ): Promise<Record<number, string>> {
   const BATCH_SIZE = 30;
   const translations: Record<number, string> = {};
 
   for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+    // Ilk gruptan sonra kisa bir nefes: dakikalik token kotasini korur.
+    if (i > 0) await sleep(1500);
+
     const chunk = sentences.slice(i, i + BATCH_SIZE);
     const numbered = chunk.map((s) => `${s.id}. ${s.en}`).join('\n');
 
@@ -317,6 +427,7 @@ ${numbered}`;
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
+      jsonHint: '{"translations":[{"id":1,"tr":"Turkce ceviri"}]}',
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_COACH,
         responseMimeType: "application/json",
@@ -357,7 +468,7 @@ ${numbered}`;
 }
 
 /** Kelime, gramer ve quiz verilerini tek cagrida uretir. */
-async function generateStudyMaterial(ai: GoogleGenAI, fullText: string) {
+async function generateStudyMaterial(ai: GoogleGenAI | null, fullText: string) {
   const prompt = `Asagidaki Ingilizce konusma metnini incele ve ogrenme materyali uret.
 
 METIN:
@@ -370,6 +481,7 @@ TALIMATLAR:
 
   const response = await generateContentWithRetry(ai, {
     contents: prompt,
+    jsonHint: '{"vocabulary":[{"word":"","type":"","ipa":"","meaningTr":"","pronunciationNote":"","exampleSentence":""}],"grammarRules":[{"topic":"","explanationTr":"","examples":[{"en":"","tr":""}]}],"quizQuestions":[{"id":1,"type":"multiple_choice","question":"","options":["","","",""],"correctOptionIndex":0,"sampleAnswerEn":"","explanationTr":""}]}',
     config: {
       systemInstruction: SYSTEM_INSTRUCTION_COACH,
       responseMimeType: "application/json",
@@ -553,13 +665,13 @@ app.post("/api/extract-transcript", async (req, res) => {
       }
     }
 
-    const ai = getGeminiClient();
+    const ai = getAIClient();
     const fullText = sentences.map((s) => s.en).join(' ');
 
-    const [translations, material] = await Promise.all([
-      translateSentencesInBatches(ai, sentences),
-      generateStudyMaterial(ai, fullText),
-    ]);
+    // Istekleri PARALEL degil SIRALI calistiriyoruz. Paralel calistirmak
+    // dakikalik istek/token kotasini aninda tuketip 429 aliyordu.
+    const translations = await translateSentencesInBatches(ai, sentences);
+    const material = await generateStudyMaterial(ai, fullText);
 
     const finalSentences = sentences.map((s) => ({
       id: s.id,
@@ -594,7 +706,7 @@ app.post("/api/extract-transcript", async (req, res) => {
 app.post("/api/analyze-phonetics-grammar", async (req, res) => {
   try {
     const { transcriptSentences } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIClient();
 
     const fullText = Array.isArray(transcriptSentences)
       ? transcriptSentences.map((s: any) => s.en).join(" ")
@@ -610,6 +722,7 @@ Lütfen şu analizleri yapıp JSON döndür:
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
+      jsonHint: '{"vocabulary":[{"word":"","type":"","ipa":"","meaningTr":"","pronunciationNote":"","exampleSentence":""}],"grammarRules":[{"topic":"","explanationTr":"","examples":[{"en":"","tr":""}]}]}',
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_COACH,
         responseMimeType: "application/json",
@@ -675,7 +788,7 @@ Lütfen şu analizleri yapıp JSON döndür:
 app.post("/api/generate-quiz", async (req, res) => {
   try {
     const { transcriptText } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIClient();
 
     const prompt = `Katman 3: Anlama Kontrolü (Altyazısız İzleme & Dinleme Sonrası Test)
 Metne dayalı 5 adet İngilizce soru oluştur. Soruların 3 tanesi Çoktan Seçmeli (Multiple Choice - 4 şık), 2 tanesi Açık Uçlu (Open-ended) olsun.
@@ -704,6 +817,7 @@ JSON Formatı:
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
+      jsonHint: '{"quizQuestions":[{"id":1,"type":"multiple_choice","question":"","options":["","","",""],"correctOptionIndex":0,"sampleAnswerEn":"","explanationTr":""}]}',
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_COACH,
         responseMimeType: "application/json"
@@ -734,7 +848,7 @@ app.post("/api/evaluate-writing", async (req, res) => {
       return res.status(400).json({ error: "Yazı metni boş olamaz." });
     }
 
-    const ai = getGeminiClient();
+    const ai = getAIClient();
     const prompt = `4. KATMAN: İngilizce Özet ve Yorum Değerlendirmesi
 Konu Bağlamı: ${topicContext || "General Video Context"}
 Kullanıcının İngilizce Özeti ve Yorumu:
@@ -747,6 +861,7 @@ Lütfen kullanıcı metnini dikkatle incele ve JSON formatında geri bildirim sa
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
+      jsonHint: '{"grammarCorrections":[{"original":"","corrected":"","explanationTr":""}],"naturalPhrasing":[{"original":"","nativeSuggestion":"","whyBetterTr":""}],"generalFeedback":""}',
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_COACH,
         responseMimeType: "application/json",
@@ -800,7 +915,7 @@ Lütfen kullanıcı metnini dikkatle incele ve JSON formatında geri bildirim sa
 app.post("/api/speaking-chat", async (req, res) => {
   try {
     const { currentStep, userResponse, conversationHistory, topicContext } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIClient();
 
     const prompt = `5. KATMAN: Konuşma ve Sesli Anlatım Simülasyonu
 Video Konusu: ${topicContext}
@@ -828,6 +943,7 @@ JSON Formatı:
 
     const response = await generateContentWithRetry(ai, {
       contents: prompt,
+      jsonHint: '{"feedback":"","nextQuestion":"","nextQuestionTr":"","step":1,"isCompleted":false}',
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_COACH,
         responseMimeType: "application/json"
@@ -850,7 +966,7 @@ JSON Formatı:
 app.post("/api/ask-grammar-coach", async (req, res) => {
   try {
     const { question, context } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIClient();
 
     const prompt = `Bağlam: "${context || ""}"
 Kullanıcı Sorusu: "${question}"
