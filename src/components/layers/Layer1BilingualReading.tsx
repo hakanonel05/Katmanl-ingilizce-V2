@@ -17,7 +17,7 @@ interface Layer1BilingualReadingProps {
   onCompleteLayer: () => void;
   onUpdateVideoUrl?: (youtubeUrl: string) => void;
   /** Dersi videonun gerçek YouTube altyazısından yeniden üretir. */
-  onResyncFromCaptions?: () => Promise<void>;
+  onResyncFromCaptions?: (onProgress?: (message: string) => void) => Promise<void>;
 }
 
 /**
@@ -73,6 +73,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
   // Gerçek altyazıdan yeniden üretme durumu
   const [isResyncing, setIsResyncing] = useState(false);
   const [resyncError, setResyncError] = useState<string | null>(null);
+  const [resyncProgress, setResyncProgress] = useState('');
 
   // YouTube Player State
   const playerRef = useRef<any>(null);
@@ -99,12 +100,14 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
     if (!onResyncFromCaptions || isResyncing) return;
     setIsResyncing(true);
     setResyncError(null);
+    setResyncProgress('Başlatılıyor...');
     try {
-      await onResyncFromCaptions();
+      await onResyncFromCaptions(setResyncProgress);
     } catch (err: any) {
       setResyncError(err?.message || 'Senkronizasyon başarısız oldu.');
     } finally {
       setIsResyncing(false);
+      setResyncProgress('');
     }
   };
 
@@ -387,7 +390,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                 <RefreshCw className={`w-3.5 h-3.5 ${isResyncing ? 'animate-spin' : ''}`} />
                 <span>
                   {isResyncing
-                    ? 'Altyazı çekiliyor ve çevriliyor, bu bir dakika sürebilir...'
+                    ? (resyncProgress || 'Altyazı çekiliyor...')
                     : 'Gerçek Altyazıdan Senkronize Et'}
                 </span>
               </button>
@@ -445,7 +448,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                   title="Dersi videonun gerçek altyazısından yeniden üret"
                 >
                   <RefreshCw className={`w-3 h-3 ${isResyncing ? 'animate-spin' : ''}`} />
-                  <span>{isResyncing ? 'Yenileniyor...' : 'Altyazıdan Yenile'}</span>
+                  <span>{isResyncing ? (resyncProgress || 'Yenileniyor...') : 'Altyazıdan Yenile'}</span>
                 </button>
               )}
 
