@@ -182,9 +182,28 @@ export async function deleteCardsByLesson(lessonId: string): Promise<void> {
   for (const c of cards) await deleteCard(c.id);
 }
 
-/** Bugün çalışılabilecek kartlar: vadesi gelmiş ve askıya alınmamış. */
-export function selectDueCards(cards: VocabCard[], now = Date.now()): VocabCard[] {
-  return cards
+export interface DueSelectionLimits {
+  /** Bugün kaç YENİ kart daha tanıtılabilir. undefined veya 0 = sınırsız. */
+  newRemaining?: number;
+  /** Bugün kaç tekrar kartı daha gösterilebilir. undefined veya 0 = sınırsız. */
+  reviewRemaining?: number;
+}
+
+/** Kart daha önce hiç çalışılmamışsa "yeni" sayılır. */
+export function isNewCard(c: VocabCard): boolean {
+  return c.reps === 0;
+}
+
+/**
+ * Bugün çalışılabilecek kartlar: vadesi gelmiş, askıya alınmamış ve
+ * günlük sınırların içinde kalanlar (Anki'deki gibi).
+ */
+export function selectDueCards(
+  cards: VocabCard[],
+  now = Date.now(),
+  limits: DueSelectionLimits = {}
+): VocabCard[] {
+  const due = cards
     .filter((c) => !c.suspended && c.due <= now)
     .sort((a, b) => {
       // Önce öğrenme/yeniden öğrenme kartları, sonra vadesi en eski olan
@@ -192,6 +211,30 @@ export function selectDueCards(cards: VocabCard[], now = Date.now()): VocabCard[
       const r = rank(a) - rank(b);
       return r !== 0 ? r : a.due - b.due;
     });
+
+  const newLimit = limits.newRemaining;
+  const reviewLimit = limits.reviewRemaining;
+
+  if (!newLimit && !reviewLimit) return due;
+
+  let newLeft = newLimit && newLimit > 0 ? newLimit : Infinity;
+  let reviewLeft = reviewLimit && reviewLimit > 0 ? reviewLimit : Infinity;
+
+  const result: VocabCard[] = [];
+  for (const c of due) {
+    if (isNewCard(c)) {
+      if (newLeft > 0) {
+        result.push(c);
+        newLeft--;
+      }
+    } else {
+      if (reviewLeft > 0) {
+        result.push(c);
+        reviewLeft--;
+      }
+    }
+  }
+  return result;
 }
 
 export interface DeckStats {
