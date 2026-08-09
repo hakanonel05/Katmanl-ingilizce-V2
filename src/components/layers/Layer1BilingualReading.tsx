@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { VideoLesson, SentencePair } from '../../types';
 import { extractYouTubeId } from '../../lib/youtube';
+import { SelectionToCard } from '../vocab/SelectionToCard';
 import { Volume2, Bookmark, CheckCircle, Search, Eye, EyeOff, Youtube, Edit2, Check, X, LayoutGrid, List, Play, Sliders, AlertTriangle, RefreshCw } from 'lucide-react';
 
 declare global {
@@ -79,6 +80,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
   const playerRef = useRef<any>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const activeSentenceRef = useRef<HTMLDivElement | null>(null);
+  const transcriptAreaRef = useRef<HTMLDivElement | null>(null);
 
   const [currentVideoTime, setCurrentVideoTime] = useState<number>(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
@@ -316,6 +318,13 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Metinde kelime seçilince "Karta Ekle" balonu */}
+      <SelectionToCard
+        containerRef={transcriptAreaRef}
+        lessonId={lesson.id}
+        lessonTitle={lesson.title}
+      />
+
       {/* Control Header */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -573,7 +582,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
         </div>
 
         {/* Transcript Column */}
-        <div className={viewMode === 'split' ? 'lg:col-span-7' : 'w-full'}>
+        <div ref={transcriptAreaRef} className={viewMode === 'split' ? 'lg:col-span-7' : 'w-full'}>
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
 
             <div className="bg-slate-900 text-white px-4 py-3 border-b border-slate-800 flex items-center justify-between">

@@ -3,6 +3,7 @@ import { VideoLesson } from '../../types';
 import { extractYouTubeId } from '../../lib/youtube';
 import { useYouTubePlayer, formatSeconds, getSentenceStart } from '../../lib/useYouTubePlayer';
 import { CheckCircle, Ear, AlertTriangle } from 'lucide-react';
+import { SelectionToCard } from '../vocab/SelectionToCard';
 
 interface Props {
   lesson: VideoLesson;
@@ -18,6 +19,7 @@ export const Layer2ActiveListening: React.FC<Props> = ({ lesson, onCompleteLayer
   const ytId = lesson.youtubeId || extractYouTubeId(lesson.youtubeUrl);
   const { containerRef, isPlaying, currentTime } = useYouTubePlayer(ytId, 'yt-active-listening');
   const activeRef = useRef<HTMLDivElement | null>(null);
+  const transcriptAreaRef = useRef<HTMLDivElement | null>(null);
 
   const syncPoints = useMemo(
     () =>
@@ -48,6 +50,12 @@ export const Layer2ActiveListening: React.FC<Props> = ({ lesson, onCompleteLayer
 
   return (
     <div className="space-y-6">
+      <SelectionToCard
+        containerRef={transcriptAreaRef}
+        lessonId={lesson.id}
+        lessonTitle={lesson.title}
+      />
+
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
         <div className="flex items-center space-x-2.5 mb-2">
           <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-md uppercase tracking-wider">
@@ -88,7 +96,7 @@ export const Layer2ActiveListening: React.FC<Props> = ({ lesson, onCompleteLayer
             </div>
           </div>
 
-          <div className="lg:col-span-7">
+          <div ref={transcriptAreaRef} className="lg:col-span-7">
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
               <div className="bg-slate-900 text-white px-4 py-3 flex items-center space-x-2">
                 <Ear className="w-4 h-4 text-emerald-400" />
