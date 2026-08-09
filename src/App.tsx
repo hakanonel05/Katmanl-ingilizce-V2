@@ -5,6 +5,10 @@ import { Header } from './components/Header';
 import { LessonSelector } from './components/LessonSelector';
 import { LayerNavigation, LAYER_TABS } from './components/LayerNavigation';
 import { Layer1BilingualReading } from './components/layers/Layer1BilingualReading';
+import { Layer2ActiveListening } from './components/layers/Layer2ActiveListening';
+import { Layer3Shadowing } from './components/layers/Layer3Shadowing';
+import { Layer4NoSubtitles } from './components/layers/Layer4NoSubtitles';
+import { Layer5AudioOnly } from './components/layers/Layer5AudioOnly';
 import { Layer2PhoneticsGrammar } from './components/layers/Layer2PhoneticsGrammar';
 import { Layer3ComprehensionQuiz } from './components/layers/Layer3ComprehensionQuiz';
 import { Layer4WritingEvaluation } from './components/layers/Layer4WritingEvaluation';
@@ -144,7 +148,7 @@ export default function App() {
    * dogru kaliyor; ayni dersi iki kez bitirmek sayiyi sisirmiyor.
    */
   const displayProgress: UserProgress = useMemo(() => {
-    const completed = lessons.filter((l) => l.completedLayers?.includes(5)).length;
+    const completed = lessons.filter((l) => l.completedLayers?.includes(7)).length;
     return {
       ...progress,
       completedVideoCount: completed,
@@ -208,8 +212,9 @@ export default function App() {
     // Herhangi bir katman tamamlandiginda bugun "calisilmis" sayilir
     recordStudyToday();
 
-    // Move to next layer if not at max
-    if (layerNum < 6) {
+    // Çekirdek 7 katman içinde otomatik ilerle. 8 ekstra çalışma olduğu için
+    // oradan otomatik geçiş yapılmıyor.
+    if (layerNum < 7) {
       setActiveLayer(layerNum + 1);
     }
   };
@@ -529,7 +534,7 @@ async function buildLessonData(
 
         {/* Dynamic Layer Views */}
         <div className="min-h-[500px]">
-          {!activeLesson && activeLayer !== 6 ? (
+          {!activeLesson && activeLayer !== 9 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4 shadow-sm max-w-xl mx-auto my-12">
               <h3 className="text-base font-bold text-slate-900">Çalışacak Ders Seçilmedi</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -557,37 +562,59 @@ async function buildLessonData(
               )}
 
               {activeLayer === 2 && activeLesson && (
-                <Layer2PhoneticsGrammar
+                <Layer2ActiveListening
                   lesson={activeLesson}
                   onCompleteLayer={() => handleCompleteLayer(2)}
-                  onUpdateLessonData={handleUpdateLessonData}
                 />
               )}
 
               {activeLayer === 3 && activeLesson && (
-                <Layer3ComprehensionQuiz
+                <Layer3Shadowing
                   lesson={activeLesson}
                   onCompleteLayer={() => handleCompleteLayer(3)}
-                  onUpdateQuizData={handleUpdateQuizData}
                 />
               )}
 
               {activeLayer === 4 && activeLesson && (
-                <Layer4WritingEvaluation
+                <Layer4NoSubtitles
                   lesson={activeLesson}
                   onCompleteLayer={() => handleCompleteLayer(4)}
-                  onSaveWriting={handleSaveWriting}
+                  onUpdateQuizData={handleUpdateQuizData}
                 />
               )}
 
               {activeLayer === 5 && activeLesson && (
-                <Layer5SpeakingSimulation
+                <Layer5AudioOnly
                   lesson={activeLesson}
                   onCompleteLayer={() => handleCompleteLayer(5)}
                 />
               )}
 
-              {activeLayer === 6 && (
+              {activeLayer === 6 && activeLesson && (
+                <Layer4WritingEvaluation
+                  lesson={activeLesson}
+                  onCompleteLayer={() => handleCompleteLayer(6)}
+                  onSaveWriting={handleSaveWriting}
+                />
+              )}
+
+              {activeLayer === 7 && activeLesson && (
+                <Layer5SpeakingSimulation
+                  lesson={activeLesson}
+                  onCompleteLayer={() => handleCompleteLayer(7)}
+                />
+              )}
+
+              {/* Ekstra katman: metodolojinin çekirdeğinde yok, destek çalışması */}
+              {activeLayer === 8 && activeLesson && (
+                <Layer2PhoneticsGrammar
+                  lesson={activeLesson}
+                  onCompleteLayer={() => handleCompleteLayer(8)}
+                  onUpdateLessonData={handleUpdateLessonData}
+                />
+              )}
+
+              {activeLayer === 9 && (
                 <ProgressDashboard
                   progress={displayProgress}
                   lessons={lessons}
