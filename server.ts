@@ -99,7 +99,103 @@ function normalizeCues(items: any[]): Cue[] {
 }
 
 /** İngilizce altyazıyı dil tercihine göre sırayla dener. */
-async function fetchYoutubeCues(videoId: string): Promise<Cue[]> {
+/* ------------------------------------------------------------
+   ALTYAZI KAYNAGI
+   CAPTION_PROVIDER ortam degiskeni:
+     - "auto"   (varsayilan) -> once dogrudan YouTube, olmazsa harici API
+     - "direct" -> sadece dogrudan YouTube (youtube-transcript kutuphanesi)
+     - "api"    -> sadece youtube-transcript.io
+   YouTube, Netlify/Lambda gibi veri merkezi IP'lerini engelledigi icin
+   bulutta "direct" yolu calismayabilir. Harici API kendi proxy havuzunu
+   kullandigindan bu engeli asar.
+   ------------------------------------------------------------ */
+
+const CAPTION_PROVIDER = (process.env.CAPTION_PROVIDER || 'auto').toLowerCase();
+
+/**
+ * Gelen JSON'un icinde altyazi parcalarindan olusan diziyi arar.
+ * youtube-transcript.io yanit semasini belgelemedigi icin sema tahmin
+ * etmek yerine, "metin + baslangic zamani" iceren ilk diziyi buluyoruz.
+ * Bu sayede saglayici formatini degistirse de kod calismaya devam eder.
+ */
+function findSegmentArray(node: any, depth = 0): any[] | null {
+  if (!node || depth > 6) return null;
+
+  if (Array.isArray(node)) {
+    const looksLikeSegments =
+      node.length > 0 &&
+      node.every(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          (typeof item.text === 'string' || typeof item.snippet === 'string') &&
+          (item.start !== undefined || item.offset !== undefined || item.startMs !== undefined)
+      );
+    if (looksLikeSegments) return node;
+
+    for (const item of node) {
+      const found = findSegmentArray(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof node === 'object') {
+    for (const key of Object.keys(node)) {
+      const found = findSegmentArray(node[key], depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+/** youtube-transcript.io uzerinden altyazi ceker. */
+async function fetchCuesFromApi(videoId: string): Promise<{ cues: Cue[]; raw: any }> {
+  const token = process.env.YOUTUBE_TRANSCRIPT_IO_TOKEN;
+  if (!token) {
+    throw new Error("YOUTUBE_TRANSCRIPT_IO_TOKEN environment variable is missing.");
+  }
+
+  const res = await fetch("https://www.youtube-transcript.io/api/transcripts", {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ids: [videoId] }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    const error: any = new Error(`youtube-transcript.io ${res.status}: ${body.slice(0, 300)}`);
+    error.httpStatus = res.status;
+    const retryAfter = res.headers.get("retry-after");
+    if (retryAfter) error.retryAfterMs = Math.ceil(parseFloat(retryAfter) * 1000);
+    throw error;
+  }
+
+  const data: any = await res.json();
+  const segments = findSegmentArray(data);
+
+  if (!segments || segments.length === 0) {
+    throw new Error(
+      "youtube-transcript.io yanitinda altyazi parcalari bulunamadi. Yanit semasi degismis olabilir."
+    );
+  }
+
+  // Ortak bicime cevir; birim tespitini normalizeCues yapar
+  const items = segments.map((seg: any) => ({
+    text: seg.text ?? seg.snippet ?? '',
+    offset: Number(seg.start ?? seg.offset ?? seg.startMs ?? 0),
+    duration: Number(seg.dur ?? seg.duration ?? seg.durationMs ?? 0),
+  }));
+
+  return { cues: normalizeCues(items), raw: data };
+}
+
+/** Dogrudan YouTube'dan altyazi ceker (kutuphane yolu). */
+async function fetchCuesDirect(videoId: string): Promise<Cue[]> {
   const langAttempts: (string | undefined)[] = ['en', 'en-US', 'en-GB', undefined];
   let lastError: any = null;
 
@@ -116,6 +212,32 @@ async function fetchYoutubeCues(videoId: string): Promise<Cue[]> {
   }
 
   throw lastError || new Error('Altyazi bulunamadi.');
+}
+
+/**
+ * Secilen stratejiye gore altyaziyi ceker.
+ * "auto" modunda once dogrudan denenir (bedava), olmazsa harici API'ye gecilir.
+ */
+async function fetchYoutubeCues(videoId: string): Promise<Cue[]> {
+  const hasApiToken = !!process.env.YOUTUBE_TRANSCRIPT_IO_TOKEN;
+
+  if (CAPTION_PROVIDER === 'api') {
+    const { cues } = await fetchCuesFromApi(videoId);
+    return cues;
+  }
+
+  try {
+    return await fetchCuesDirect(videoId);
+  } catch (directError: any) {
+    if (CAPTION_PROVIDER === 'direct' || !hasApiToken) throw directError;
+
+    console.warn(
+      `[Captions] Dogrudan cekme basarisiz (${directError?.message || directError}). ` +
+      `youtube-transcript.io deneniyor.`
+    );
+    const { cues } = await fetchCuesFromApi(videoId);
+    return cues;
+  }
 }
 
 /**
@@ -721,6 +843,71 @@ TALIMATLAR:
 // API Endpoints
 
 /**
+ * TESHIS (adres cubugundan calisir):
+ *   https://siten.netlify.app/api/check-captions?v=VIDEO_ID_VEYA_LINK
+ * Gemini/Groq cagrilmaz. Altyazinin cekilip cekilemedigini ve cekilemiyorsa
+ * TAM hata metnini dondurur.
+ */
+app.get("/api/check-captions", async (req, res) => {
+  const started = Date.now();
+  const input = String(req.query.v || req.query.url || '');
+  const ytId = extractYouTubeId(input.trim());
+
+  if (!ytId) {
+    return res.status(400).json({
+      ok: false,
+      error: "Gecerli bir YouTube linki veya video ID gerekli. Ornek: /api/check-captions?v=arj7oStGLkU",
+    });
+  }
+
+  try {
+    const cues = await fetchYoutubeCues(ytId);
+    const sentences = buildSentencesFromCues(cues);
+    res.json({
+      ok: true,
+      videoId: ytId,
+      captionProvider: CAPTION_PROVIDER,
+      cueCount: cues.length,
+      sentenceCount: sentences.length,
+      elapsedMs: Date.now() - started,
+      preview: sentences.slice(0, 3).map((s) => ({
+        timestamp: formatTimestamp(s.startSec || 0),
+        en: s.en.slice(0, 90),
+      })),
+    });
+  } catch (error: any) {
+    // ?raw=1 eklenirse youtube-transcript.io'nun ham yaniti donulur.
+    // Yanit semasi belgelenmedigi icin sorun cikarsa buradan gorulur.
+    let rawSample: any = undefined;
+    if (req.query.raw && process.env.YOUTUBE_TRANSCRIPT_IO_TOKEN) {
+      try {
+        const r = await fetch("https://www.youtube-transcript.io/api/transcripts", {
+          method: "POST",
+          headers: {
+            "Authorization": `Basic ${process.env.YOUTUBE_TRANSCRIPT_IO_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ids: [ytId] }),
+        });
+        rawSample = JSON.stringify(await r.json()).slice(0, 1200);
+      } catch (e: any) {
+        rawSample = `ham yanit alinamadi: ${e?.message || e}`;
+      }
+    }
+
+    res.status(502).json({
+      ok: false,
+      videoId: ytId,
+      captionProvider: CAPTION_PROVIDER,
+      elapsedMs: Date.now() - started,
+      error: error?.message || String(error),
+      rawSample,
+      hint: "Bu hata sadece Netlify'da goruluyor ve her videoda tekrarliyorsa, YouTube veri merkezi IP'lerini engelliyor demektir. YOUTUBE_TRANSCRIPT_IO_TOKEN ekleyerek harici API'ye gecebilirsiniz.",
+    });
+  }
+});
+
+/**
  * 0. TESHIS UCU: Sadece altyaziyi cekip ozet dondurur, Gemini cagrilmaz.
  * Netlify/Lambda gibi ortamlarda YouTube'un veri merkezi IP'lerini engelleyip
  * engellemedigini 1-3 saniyede anlamak icin. Zaman asimina takilmaz.
@@ -778,6 +965,7 @@ app.post("/api/extract-transcript", async (req, res) => {
     let sentences: BuiltSentence[] = [];
     let hasRealTimings = false;
     let syncNotice = "";
+    let captionError = "";
 
     if (activeYtId) {
       try {
@@ -802,7 +990,8 @@ app.post("/api/extract-transcript", async (req, res) => {
           hasRealTimings = true;
         }
       } catch (err: any) {
-        console.warn("YoutubeTranscript error:", err?.message || err);
+        captionError = err?.message || String(err);
+        console.warn("YoutubeTranscript error:", captionError);
       }
     }
 
@@ -811,7 +1000,8 @@ app.post("/api/extract-transcript", async (req, res) => {
       const manualText = ytIdFromInput ? '' : inputTrimmed;
       if (!manualText) {
         return res.status(400).json({
-          error: "Bu YouTube videosunun altyazisi (CC) bulunamadi veya erisime kapali. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip videonun linkini ve transkriptini manuel yapistirarak ders olusturun."
+          error: "Bu YouTube videosunun altyazisi (CC) alinamadi. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip metni manuel yapistirin.",
+          reason: captionError || "bilinmiyor",
         });
       }
       sentences = buildSentencesFromPlainText(manualText);
@@ -892,6 +1082,7 @@ app.post("/api/transcript-sentences", async (req, res) => {
     let sentences: BuiltSentence[] = [];
     let hasRealTimings = false;
     let syncNotice = "";
+    let captionError = "";
 
     if (activeYtId) {
       try {
@@ -912,7 +1103,8 @@ app.post("/api/transcript-sentences", async (req, res) => {
           hasRealTimings = true;
         }
       } catch (err: any) {
-        console.warn("YoutubeTranscript error:", err?.message || err);
+        captionError = err?.message || String(err);
+        console.warn("YoutubeTranscript error:", captionError);
       }
     }
 
@@ -920,7 +1112,8 @@ app.post("/api/transcript-sentences", async (req, res) => {
       const manualText = ytIdFromInput ? '' : inputTrimmed;
       if (!manualText) {
         return res.status(400).json({
-          error: "Bu YouTube videosunun altyazisi (CC) bulunamadi veya erisime kapali. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip metni manuel yapistirin."
+          error: "Bu YouTube videosunun altyazisi (CC) alinamadi. Lutfen 'Ingilizce Metin / Transkript Yapistir' sekmesini secip metni manuel yapistirin.",
+          reason: captionError || "bilinmiyor",
         });
       }
       sentences = buildSentencesFromPlainText(manualText);
