@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Sparkles, HelpCircle, Edit3, Mic, CheckCircle2, Award, Ear, Volume2, EyeOff, Headphones } from 'lucide-react';
+import { BookOpen, Sparkles, HelpCircle, Edit3, Mic, CheckCircle2, Award, Ear, Volume2, EyeOff, Headphones, Layers } from 'lucide-react';
 
 export interface LayerTab {
   id: number;
@@ -62,6 +62,12 @@ export const LAYER_TABS: LayerTab[] = [
     label: 'Ekstra: Fonetik & Gramer',
     subLabel: 'Genelden Özele Analiz',
     icon: <Sparkles className="w-4 h-4" />
+  },
+  {
+    id: 10,
+    label: 'Kelime Kartları',
+    subLabel: 'FSRS Aralıklı Tekrar',
+    icon: <Layers className="w-4 h-4" />
   },
   {
     id: 9,
