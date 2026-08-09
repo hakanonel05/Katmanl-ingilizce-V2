@@ -1215,7 +1215,7 @@ NE ARIYORUZ (onem sirasiyla):
 KESIN KURALLAR:
 - SADECE metinde GERCEKTEN GECEN ifadeleri al. Uydurma.
 - A2 ve altindaki basit kelimeleri alma.
-- En fazla ${target} adet dondur. Kalite sayidan onemli.
+- TAM OLARAK ${target} adet dondur. Metinde bu kadar ileri seviye ifade yoksa,\n  B1 seviyesindeki faydali kaliplarla tamamla. Sayiyi eksik birakma.
 - "contextEn" alanina ifadenin metinde gectigi cumleyi AYNEN yaz.
 - "level" alani A2, B1, B2, C1 veya C2 olmali; agirlik B2-C1'de olsun.
 - "kind" alani: word, phrasal_verb, collocation, idiom veya expression.
@@ -1292,6 +1292,88 @@ KESIN KURALLAR:
     const isQuota = isRateLimitError(error);
     res.status(isQuota ? 429 : 500).json({
       error: isQuota ? describeRateLimit(error) : formatErrorMessage(error, "Kelimeler ayiklanamadi."),
+    });
+  }
+});
+
+// 1e. Kullanicinin metinden sectigi tek bir kelime/ifade icin kart bilgisi uretir.
+app.post("/api/define-word", async (req, res) => {
+  try {
+    const { word, context } = req.body;
+    const term = String(word || '').trim();
+
+    if (!term) {
+      return res.status(400).json({ error: "Kelime veya ifade gereklidir." });
+    }
+    if (term.length > 120) {
+      return res.status(400).json({ error: "Secilen metin cok uzun. Daha kisa bir ifade secin." });
+    }
+
+    const ai = getAIClient();
+
+    const prompt = `Bir Ingilizce ogrencisi asagidaki ifadeyi karta eklemek istiyor.
+
+IFADE: "${term}"
+${context ? `GECTIGI CUMLE: "${String(context).slice(0, 500)}"` : ''}
+
+Bu ifade icin kart bilgisi uret:
+- "front": ifadenin duzeltilmis/normalize edilmis hali. Fiil cekimliyse mastar
+  haline getir (running -> run, went -> go). Phrasal verb veya kalip ise oldugu
+  gibi birak.
+- "back": GECTIGI CUMLEDEKI anlamina gore dogal Turkce karsilik. Sozluk kalibi
+  degil, akici bir ceviri. Kelimenin birden fazla anlami varsa bu baglamdakini sec.
+- "ipa": telaffuz (IPA)
+- "kind": word, phrasal_verb, collocation, idiom veya expression
+- "level": A2, B1, B2, C1 veya C2
+- "exampleEn": ifadeyi kullanan YENI ve basit bir ornek cumle
+- "exampleTr": ornek cumlenin Turkcesi`;
+
+    const response = await generateContentWithRetry(ai, {
+      contents: prompt,
+      jsonHint: '{"front":"","back":"","ipa":"","kind":"word","level":"B2","exampleEn":"","exampleTr":""}',
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION_COACH,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            front: { type: Type.STRING },
+            back: { type: Type.STRING },
+            ipa: { type: Type.STRING },
+            kind: { type: Type.STRING },
+            level: { type: Type.STRING },
+            exampleEn: { type: Type.STRING },
+            exampleTr: { type: Type.STRING },
+          },
+          required: ["front", "back", "kind", "level"],
+        },
+      },
+    });
+
+    let item: any = {};
+    try {
+      item = JSON.parse(response.text || "{}");
+    } catch (e) {
+      console.warn("[DefineWord] parse hatasi:", e);
+    }
+
+    const allowedKinds = ["word", "phrasal_verb", "collocation", "idiom", "expression"];
+    const allowedLevels = ["A2", "B1", "B2", "C1", "C2"];
+
+    res.json({
+      front: String(item.front || term).trim(),
+      back: String(item.back || '').trim(),
+      ipa: item.ipa ? String(item.ipa).trim() : undefined,
+      kind: allowedKinds.includes(item.kind) ? item.kind : 'word',
+      level: allowedLevels.includes(item.level) ? item.level : 'B2',
+      exampleEn: item.exampleEn ? String(item.exampleEn).trim() : undefined,
+      exampleTr: item.exampleTr ? String(item.exampleTr).trim() : undefined,
+    });
+  } catch (error: any) {
+    console.error("Error in /api/define-word:", error);
+    const isQuota = isRateLimitError(error);
+    res.status(isQuota ? 429 : 500).json({
+      error: isQuota ? describeRateLimit(error) : formatErrorMessage(error, "Kelime bilgisi alinamadi."),
     });
   }
 });
