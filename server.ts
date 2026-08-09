@@ -225,6 +225,31 @@ const GEMINI_MODELS = [
   "gemini-2.0-flash",
 ];
 
+/**
+ * Saglayici oncelik sirasi. AI_PROVIDERS ile virgullu liste verilebilir:
+ *   AI_PROVIDERS="gemini,groq"
+ * Bir saglayici kota/limit hatasi verirse sistem otomatik olarak
+ * sonrakine gecer. Anahtari tanimli olmayan saglayicilar atlanir.
+ * Geriye donuk uyumluluk icin tekil AI_PROVIDER de desteklenir.
+ */
+function getProviderChain(): string[] {
+  const raw = process.env.AI_PROVIDERS || process.env.AI_PROVIDER || 'gemini,groq';
+  const requested = raw.split(',').map((p) => p.trim().toLowerCase()).filter(Boolean);
+
+  const hasKey: Record<string, boolean> = {
+    gemini: !!process.env.GEMINI_API_KEY,
+    groq: !!process.env.GROQ_API_KEY,
+  };
+
+  const available = requested.filter((p) => hasKey[p]);
+
+  if (available.length === 0) {
+    // Hicbiri tanimli degilse ilk isteneni birak ki hata mesaji anlamli olsun
+    return requested.length ? [requested[0]] : ['gemini'];
+  }
+  return available;
+}
+
 // Helper to instantiate Gemini AI
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -243,7 +268,14 @@ function getGeminiClient() {
 
 /** Groq secildiginde Gemini istemcisi gerekmez. */
 function getAIClient(): GoogleGenAI | null {
-  return AI_PROVIDER === 'groq' ? null : getGeminiClient();
+  // Zincirin ilk saglayicisi Gemini degilse istemci gerekmez.
+  // Anahtar yoksa da hata firlatmayiz; zincirdeki diger saglayici devreye girer.
+  if (!process.env.GEMINI_API_KEY) return null;
+  try {
+    return getGeminiClient();
+  } catch {
+    return null;
+  }
 }
 
 function isRateLimitError(err: any): boolean {
@@ -353,47 +385,63 @@ async function generateContentWithRetry(
     jsonHint?: string;
   }
 ): Promise<{ text: string }> {
-  const useGroq = AI_PROVIDER === 'groq';
-  const models = useGroq
-    ? (params.primaryModel ? [params.primaryModel, ...GROQ_MODELS] : GROQ_MODELS)
-    : (params.primaryModel ? [params.primaryModel, ...GEMINI_MODELS] : GEMINI_MODELS);
-
+  const providers = getProviderChain();
   let lastError: any = null;
 
-  for (const modelName of models) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        if (useGroq) {
-          return await callGroq(
-            modelName,
-            typeof params.contents === 'string' ? params.contents : JSON.stringify(params.contents),
-            params.config?.systemInstruction || '',
-            params.jsonHint || (params.config?.responseMimeType === 'application/json' ? '{}' : undefined)
-          );
-        }
+  // Saglayicilar sirayla denenir. Biri kotasini doldurursa digerine gecilir.
+  for (const provider of providers) {
+    const isGroq = provider === 'groq';
+    const baseModels = isGroq ? GROQ_MODELS : GEMINI_MODELS;
+    const models = params.primaryModel ? [params.primaryModel, ...baseModels] : baseModels;
 
-        const client = ai || getGeminiClient();
-        const response = await client.models.generateContent({
-          model: modelName,
-          contents: params.contents,
-          config: params.config,
-        });
-        return { text: response.text || "" };
-      } catch (err: any) {
-        lastError = err;
+    let providerExhausted = false;
 
-        if (isRateLimitError(err)) {
-          // 2s, 6s, 14s ... veya sunucunun bildirdigi sure
-          const backoffMs = err?.retryAfterMs || (2000 * Math.pow(2, attempt) - 2000 + 2000);
-          console.warn(
-            `[AI] ${modelName} istegi limite takildi (429). ${backoffMs} ms bekleniyor (deneme ${attempt + 1}/3).`
-          );
-          await sleep(backoffMs);
-        } else {
-          console.warn(`[AI] ${modelName} hatasi:`, err?.message || err);
-          break; // Sonraki modele gec
+    for (const modelName of models) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (isGroq) {
+            return await callGroq(
+              modelName,
+              typeof params.contents === 'string' ? params.contents : JSON.stringify(params.contents),
+              params.config?.systemInstruction || '',
+              params.jsonHint || (params.config?.responseMimeType === 'application/json' ? '{}' : undefined)
+            );
+          }
+
+          const client = ai || getGeminiClient();
+          const response = await client.models.generateContent({
+            model: modelName,
+            contents: params.contents,
+            config: params.config,
+          });
+          return { text: response.text || "" };
+        } catch (err: any) {
+          lastError = err;
+
+          if (isRateLimitError(err)) {
+            const raw = (err?.message || '') + JSON.stringify(err || {});
+
+            // GUNLUK kota dolduysa beklemenin faydasi yok; dogrudan
+            // sonraki saglayiciya gec.
+            if (/PerDay|RequestsPerDay|daily/i.test(raw)) {
+              console.warn(`[AI] ${provider} gunluk kotasi dolmus, sonraki saglayiciya geciliyor.`);
+              providerExhausted = true;
+              break;
+            }
+
+            const backoffMs = err?.retryAfterMs || 2000 * Math.pow(2, attempt);
+            console.warn(
+              `[AI] ${provider}/${modelName} limite takildi (429). ${backoffMs} ms bekleniyor (deneme ${attempt + 1}/3).`
+            );
+            await sleep(backoffMs);
+          } else {
+            console.warn(`[AI] ${provider}/${modelName} hatasi:`, err?.message || err);
+            break; // Sonraki modele gec
+          }
         }
       }
+
+      if (providerExhausted) break;
     }
   }
 
@@ -429,11 +477,86 @@ Temel Kuralların:
  * TEK bir cumle grubunu cevirir. Zaman damgalari sunucuda hesaplandigi ve
  * eslesme "id" uzerinden yapildigi icin model cumleleri bolse bile senkron bozulmaz.
  */
+/* ============================================================
+   CEVIRI SAGLAYICISI
+   ------------------------------------------------------------
+   TRANSLATE_PROVIDER ortam degiskeni:
+     - "ai"    (varsayilan) -> cumleleri LLM cevirir (baglami anlar,
+                               kaliteli, ama kotayi hizli tuketir)
+     - "libre" -> LibreTranslate cevirir (kota derdi yok, kalite daha duz)
+   LibreTranslate hata verirse otomatik olarak LLM'e dusulur.
+   ============================================================ */
+
+const TRANSLATE_PROVIDER = (process.env.TRANSLATE_PROVIDER || 'ai').toLowerCase();
+const LIBRETRANSLATE_URL = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com/translate';
+
+/**
+ * LibreTranslate ile toplu ceviri. API birden fazla metni tek istekte
+ * kabul ediyor, bu yuzden bir grup tek cagrida cevriliyor.
+ */
+async function translateWithLibre(
+  chunk: { id: number; en: string }[]
+): Promise<Record<number, string>> {
+  const body: any = {
+    q: chunk.map((s) => s.en),
+    source: 'en',
+    target: 'tr',
+    format: 'text',
+  };
+
+  // Bazi ornekler (libretranslate.com dahil) anahtar istiyor, bazilari istemiyor
+  if (process.env.LIBRETRANSLATE_API_KEY) {
+    body.api_key = process.env.LIBRETRANSLATE_API_KEY;
+  }
+
+  const res = await fetch(LIBRETRANSLATE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`LibreTranslate ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  const data: any = await res.json();
+  const translated = data?.translatedText;
+
+  // Dizi gonderdigimizde dizi bekleriz; tek metin donerse de idare edelim
+  const list: string[] = Array.isArray(translated)
+    ? translated
+    : (typeof translated === 'string' ? [translated] : []);
+
+  if (list.length !== chunk.length) {
+    throw new Error(
+      `LibreTranslate ${chunk.length} cumle icin ${list.length} ceviri dondurdu.`
+    );
+  }
+
+  const translations: Record<number, string> = {};
+  chunk.forEach((s, i) => {
+    translations[s.id] = list[i] || '';
+  });
+  return translations;
+}
+
 async function translateChunk(
   ai: GoogleGenAI | null,
   chunk: { id: number; en: string }[]
 ): Promise<Record<number, string>> {
   const translations: Record<number, string> = {};
+
+  // LibreTranslate secilmisse once onu dene. Basarisiz olursa LLM'e dus,
+  // boylece ceviri hic yapilamamis olmaz.
+  if (TRANSLATE_PROVIDER === 'libre') {
+    try {
+      return await translateWithLibre(chunk);
+    } catch (err: any) {
+      console.warn('[Translate] LibreTranslate basarisiz, LLM ile deneniyor:', err?.message || err);
+    }
+  }
+
   const numbered = chunk.map((s) => `${s.id}. ${s.en}`).join('\n');
 
   const prompt = `Asagida numaralandirilmis Ingilizce cumleler var.
