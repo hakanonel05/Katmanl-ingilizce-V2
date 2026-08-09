@@ -240,17 +240,17 @@ export const ProgressDashboard: React.FC<ProgressDashboardProps> = ({
 
           <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
             <span className="font-bold text-indigo-700 block">Gün 3:</span>
-            <span className="text-slate-700">2. Katman (Aktif Dinleme & Gölgeleme)</span>
+            <span className="text-slate-700">2 &amp; 3. Katman (Aktif Dinleme &amp; Gölgeleme)</span>
           </div>
 
           <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
             <span className="font-bold text-indigo-700 block">Gün 4-5:</span>
-            <span className="text-slate-700">3 & 4. Katman (Altyazısız İzleme & Sadece Dinleme)</span>
+            <span className="text-slate-700">4 & 5. Katman (Altyazısız İzleme & Sadece Dinleme)</span>
           </div>
 
           <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
             <span className="font-bold text-indigo-700 block">Gün 6-7:</span>
-            <span className="text-slate-700">5 & 6. Katman (Özet, Yorum Yazma & Sesli Anlatım)</span>
+            <span className="text-slate-700">6 & 7. Katman (Özet, Yorum Yazma & Sesli Anlatım)</span>
           </div>
         </div>
       </div>
