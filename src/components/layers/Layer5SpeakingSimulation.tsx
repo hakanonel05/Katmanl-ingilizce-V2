@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { VideoLesson } from '../../types';
-import { Mic, MicOff, Volume2, Send, Sparkles, CheckCircle, Loader2, Award, RefreshCw, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Volume2, Send, Sparkles, CheckCircle, Loader2, Award, RefreshCw, AlertCircle, Repeat, Plus, Minus } from 'lucide-react';
+
+/** Tekrar sayaçları ders bazında saklanır. */
+const REPS_STORAGE_KEY = 'layered_learning_speaking_reps_v1';
+const REP_TARGET = 15;
+const REP_MINIMUM = 10;
 
 interface Layer5SpeakingSimulationProps {
   lesson: VideoLesson;
@@ -19,6 +24,28 @@ export const Layer5SpeakingSimulation: React.FC<Layer5SpeakingSimulationProps> =
   lesson,
   onCompleteLayer,
 }) => {
+  // Sesli anlatım tekrar sayacı: metodoloji 10-15 tekrar öneriyor
+  const [repCount, setRepCount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(REPS_STORAGE_KEY);
+      if (raw) return JSON.parse(raw)[lesson.id] || 0;
+    } catch (e) {
+      console.error('Tekrar sayacı okunamadı:', e);
+    }
+    return 0;
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(REPS_STORAGE_KEY);
+      const all = raw ? JSON.parse(raw) : {};
+      all[lesson.id] = repCount;
+      localStorage.setItem(REPS_STORAGE_KEY, JSON.stringify(all));
+    } catch (e) {
+      console.error('Tekrar sayacı kaydedilemedi:', e);
+    }
+  }, [repCount, lesson.id]);
+
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [history, setHistory] = useState<ChatTurn[]>([]);
   const [userSpeechInput, setUserSpeechInput] = useState('');
@@ -193,6 +220,77 @@ export const Layer5SpeakingSimulation: React.FC<Layer5SpeakingSimulationProps> =
           Gemini AI Dil Koçunuz video konusu üzerinden size <strong className="text-slate-900">sırayla 3 soru</strong> soracak. 
           Her soruyu mikrofonunuzu kullanarak veya yazarak cevaplayabilirsiniz. Koçunuz konuşma dilinizin akıcılığına odaklanacak ve kısa geri bildirimlerle sizi destekleyecektir.
         </p>
+
+        {/* Sesli Anlatım Tekrar Sayacı */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center space-x-2">
+              <Repeat className="w-4 h-4 text-amber-600" />
+              <h3 className="text-sm font-bold text-amber-950">Sesli Anlatım Tekrarı</h3>
+            </div>
+            <span className="text-xs font-bold text-amber-900 bg-amber-200/80 px-2.5 py-0.5 rounded-full font-mono">
+              {repCount} / {REP_TARGET}
+            </span>
+          </div>
+
+          <p className="text-[11px] text-amber-900 leading-relaxed">
+            Yazdığınız özet ve yorumu kendinize sesli anlatın. Metodoloji
+            <strong> {REP_MINIMUM}-{REP_TARGET} tekrar</strong> öneriyor. Dışarıda kulaklıkla
+            yürürken biriyle konuşuyormuş gibi pratik yapabilirsiniz. Her tekrardan sonra
+            aşağıdaki düğmeye basın.
+          </p>
+
+          <div className="w-full bg-amber-200 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-2 rounded-full transition-all duration-500 ${
+                repCount >= REP_MINIMUM ? 'bg-emerald-500' : 'bg-amber-500'
+              }`}
+              style={{ width: `${Math.min(100, (repCount / REP_TARGET) * 100)}%` }}
+            />
+          </div>
+
+          <div className="flex items-center flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setRepCount((c) => c + 1)}
+              className="flex items-center space-x-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Bir Tekrar Yaptım</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRepCount((c) => Math.max(0, c - 1))}
+              disabled={repCount === 0}
+              className="flex items-center space-x-1 px-3 py-2 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-lg transition disabled:opacity-40 cursor-pointer"
+              title="Yanlışlıkla arttırdıysanız"
+            >
+              <Minus className="w-3.5 h-3.5" />
+              <span>Geri Al</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRepCount(0)}
+              disabled={repCount === 0}
+              className="px-3 py-2 text-[11px] font-bold text-amber-800 hover:text-amber-950 disabled:opacity-40 cursor-pointer"
+            >
+              Sıfırla
+            </button>
+
+            {repCount >= REP_MINIMUM && (
+              <span className="inline-flex items-center space-x-1.5 text-[11px] font-bold text-emerald-700">
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>
+                  {repCount >= REP_TARGET
+                    ? 'Hedefi tamamladınız'
+                    : `Alt sınırı geçtiniz, ${REP_TARGET}'e kadar devam edebilirsiniz`}
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
 
         {/* Step Progress Pills */}
         <div className="flex items-center space-x-2 pt-2 border-t border-slate-100">

@@ -2,7 +2,15 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { VideoLesson } from '../../types';
 import { extractYouTubeId } from '../../lib/youtube';
 import { useYouTubePlayer, getSentenceStart } from '../../lib/useYouTubePlayer';
-import { CheckCircle, Mic, Square, Play, RotateCcw, ChevronLeft, ChevronRight, Volume2 } from 'lucide-react';
+import { CheckCircle, Mic, Square, Play, RotateCcw, ChevronLeft, ChevronRight, Volume2, Trash2, Save, ListMusic } from 'lucide-react';
+import {
+  saveRecording,
+  getRecording,
+  listRecordings,
+  deleteRecording,
+  deleteAllRecordings,
+  StoredRecording,
+} from '../../lib/recordingStore';
 
 interface Props {
   lesson: VideoLesson;
@@ -28,6 +36,11 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
   const [recordError, setRecordError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+
+  // Kalıcı kayıtlar (IndexedDB)
+  const [savedList, setSavedList] = useState<StoredRecording[]>([]);
+  const [hasSavedForCurrent, setHasSavedForCurrent] = useState(false);
+  const [showAllRecordings, setShowAllRecordings] = useState(false);
 
   const sentences = lesson.sentences || [];
   const current = sentences[index];
@@ -73,6 +86,79 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
     window.speechSynthesis.speak(u);
   };
 
+  const refreshList = async () => {
+    try {
+      setSavedList(await listRecordings(lesson.id));
+    } catch (err) {
+      console.warn('Kayıt listesi okunamadı:', err);
+    }
+  };
+
+  // Ders değişince kayıt listesini yükle
+  useEffect(() => {
+    refreshList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson.id]);
+
+  // Cümle değişince o cümlenin kayıtlı sesini getir
+  useEffect(() => {
+    let cancelled = false;
+
+    setRecordingUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setHasSavedForCurrent(false);
+
+    if (!current) return;
+
+    (async () => {
+      try {
+        const rec = await getRecording(lesson.id, current.id);
+        if (cancelled || !rec) return;
+        setRecordingUrl(URL.createObjectURL(rec.blob));
+        setHasSavedForCurrent(true);
+      } catch (err) {
+        console.warn('Kayıt okunamadı:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson.id, current?.id]);
+
+  const handleDeleteCurrent = async () => {
+    if (!current) return;
+    try {
+      await deleteRecording(lesson.id, current.id);
+      setRecordingUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setHasSavedForCurrent(false);
+      await refreshList();
+    } catch (err) {
+      console.warn('Kayıt silinemedi:', err);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm('Bu dersteki tüm ses kayıtları silinecek. Emin misiniz?')) return;
+    try {
+      await deleteAllRecordings(lesson.id);
+      setRecordingUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setHasSavedForCurrent(false);
+      await refreshList();
+    } catch (err) {
+      console.warn('Kayıtlar silinemedi:', err);
+    }
+  };
+
   const startRecording = async () => {
     setRecordError(null);
     try {
@@ -83,13 +169,32 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         setRecordingUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return URL.createObjectURL(blob);
         });
         stream.getTracks().forEach((t) => t.stop());
+
+        // Kaydı kalıcı sakla; sayfa yenilenince kaybolmasın
+        if (current) {
+          try {
+            await saveRecording({
+              key: `${lesson.id}:${current.id}`,
+              lessonId: lesson.id,
+              sentenceId: current.id,
+              sentenceText: current.en,
+              blob,
+              createdAt: Date.now(),
+            });
+            setHasSavedForCurrent(true);
+            await refreshList();
+          } catch (err) {
+            console.warn('Kayıt saklanamadı:', err);
+            setRecordError('Kayıt alındı ama cihaza saklanamadı.');
+          }
+        }
       };
 
       recorder.start();
@@ -231,7 +336,7 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
                     className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg transition cursor-pointer"
                   >
                     <Mic className="w-3.5 h-3.5" />
-                    <span>Kaydı Başlat</span>
+                    <span>{hasSavedForCurrent ? 'Yeniden Kaydet' : 'Kaydı Başlat'}</span>
                   </button>
                 ) : (
                   <button
@@ -245,9 +350,96 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
                 )}
 
                 {recordingUrl && (
-                  <audio controls src={recordingUrl} className="h-9 max-w-full" />
+                  <>
+                    <audio controls src={recordingUrl} className="h-9 max-w-full" />
+                    <button
+                      type="button"
+                      onClick={handleDeleteCurrent}
+                      className="flex items-center space-x-1.5 px-3 py-2 bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                      title="Bu cümlenin kaydını sil"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Sil</span>
+                    </button>
+                  </>
                 )}
               </div>
+
+              {hasSavedForCurrent && (
+                <p className="inline-flex items-center space-x-1.5 text-[11px] font-semibold text-emerald-700">
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Bu cümlenin kaydı cihazında saklı</span>
+                </p>
+              )}
+
+              {/* Kayıtlı cümleler listesi */}
+              {savedList.length > 0 && (
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRecordings((v) => !v)}
+                      className="flex items-center space-x-1.5 text-xs font-bold text-slate-700 hover:text-indigo-700 cursor-pointer"
+                    >
+                      <ListMusic className="w-3.5 h-3.5" />
+                      <span>
+                        Kayıtlarım ({savedList.length}) {showAllRecordings ? '▲' : '▼'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDeleteAll}
+                      className="flex items-center space-x-1 text-[11px] font-bold text-slate-500 hover:text-rose-700 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Tümünü Sil</span>
+                    </button>
+                  </div>
+
+                  {showAllRecordings && (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {savedList.map((rec) => {
+                        const idx = sentences.findIndex((x) => x.id === rec.sentenceId);
+                        return (
+                          <div
+                            key={rec.key}
+                            className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => idx >= 0 && goTo(idx)}
+                              className="flex-1 text-left text-[11px] text-slate-700 hover:text-indigo-700 truncate cursor-pointer"
+                              title={rec.sentenceText}
+                            >
+                              {idx >= 0 ? `${idx + 1}. ` : ''}
+                              {rec.sentenceText.slice(0, 60)}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await deleteRecording(lesson.id, rec.sentenceId);
+                                if (current?.id === rec.sentenceId) {
+                                  setRecordingUrl((prev) => {
+                                    if (prev) URL.revokeObjectURL(prev);
+                                    return null;
+                                  });
+                                  setHasSavedForCurrent(false);
+                                }
+                                await refreshList();
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 shrink-0 cursor-pointer"
+                              title="Bu kaydı sil"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {recordError && (
                 <p className="text-[11px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded px-2.5 py-1.5">
