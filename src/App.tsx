@@ -9,6 +9,7 @@ import { Layer2ActiveListening } from './components/layers/Layer2ActiveListening
 import { Layer3Shadowing } from './components/layers/Layer3Shadowing';
 import { Layer4NoSubtitles } from './components/layers/Layer4NoSubtitles';
 import { Layer5AudioOnly } from './components/layers/Layer5AudioOnly';
+import { VocabHub } from './components/vocab/VocabHub';
 import { Layer2PhoneticsGrammar } from './components/layers/Layer2PhoneticsGrammar';
 import { Layer3ComprehensionQuiz } from './components/layers/Layer3ComprehensionQuiz';
 import { Layer4WritingEvaluation } from './components/layers/Layer4WritingEvaluation';
@@ -534,7 +535,7 @@ async function buildLessonData(
 
         {/* Dynamic Layer Views */}
         <div className="min-h-[500px]">
-          {!activeLesson && activeLayer !== 9 ? (
+          {!activeLesson && activeLayer !== 9 && activeLayer !== 10 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4 shadow-sm max-w-xl mx-auto my-12">
               <h3 className="text-base font-bold text-slate-900">Çalışacak Ders Seçilmedi</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -612,6 +613,10 @@ async function buildLessonData(
                   onCompleteLayer={() => handleCompleteLayer(8)}
                   onUpdateLessonData={handleUpdateLessonData}
                 />
+              )}
+
+              {activeLayer === 10 && (
+                <VocabHub lesson={activeLesson} lessons={lessons} />
               )}
 
               {activeLayer === 9 && (
