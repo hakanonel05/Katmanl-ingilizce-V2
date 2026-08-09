@@ -1188,6 +1188,114 @@ app.post("/api/study-material", async (req, res) => {
   }
 });
 
+// 1d. B2-C1 seviyesinde ifade ve gerçek diyalog kaliplarini ayiklar.
+app.post("/api/extract-vocabulary", async (req, res) => {
+  try {
+    const { text, count } = req.body;
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ error: "Metin gereklidir." });
+    }
+
+    const target = Math.min(40, Math.max(8, Number(count) || 20));
+    const ai = getAIClient();
+
+    const prompt = `Asagidaki Ingilizce konusma metnini incele ve ogrenciye kart olarak calistirilacak ifadeleri ayikla.
+
+METIN:
+"${String(text).slice(0, 14000)}"
+
+NE ARIYORUZ (onem sirasiyla):
+1. B2-C1 seviyesinde tek kelimeler (A1-B1 seviyesi temel kelimeleri ALMA: go, make, good, people gibi)
+2. Phrasal verb'ler (bring up, come across, figure out...)
+3. Kalip ifadeler / collocation'lar (make a decision, take responsibility, raise awareness...)
+4. Deyimler (idiom)
+5. GERCEK DIYALOG KALIPLARI: konusma dilinde gecen, gunluk sohbette dogrudan kullanilabilecek ifadeler
+   (to be honest, the thing is, that said, as far as I'm concerned...)
+
+KESIN KURALLAR:
+- SADECE metinde GERCEKTEN GECEN ifadeleri al. Uydurma.
+- A2 ve altindaki basit kelimeleri alma.
+- En fazla ${target} adet dondur. Kalite sayidan onemli.
+- "contextEn" alanina ifadenin metinde gectigi cumleyi AYNEN yaz.
+- "level" alani A2, B1, B2, C1 veya C2 olmali; agirlik B2-C1'de olsun.
+- "kind" alani: word, phrasal_verb, collocation, idiom veya expression.
+- Ceviriler ("back") dogal Turkce olsun, sozluk kalibi degil.`;
+
+    const response = await generateContentWithRetry(ai, {
+      contents: prompt,
+      jsonHint: '{"items":[{"front":"","back":"","ipa":"","kind":"word","level":"B2","exampleEn":"","exampleTr":"","contextEn":""}]}',
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION_COACH,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  front: { type: Type.STRING },
+                  back: { type: Type.STRING },
+                  ipa: { type: Type.STRING },
+                  kind: { type: Type.STRING },
+                  level: { type: Type.STRING },
+                  exampleEn: { type: Type.STRING },
+                  exampleTr: { type: Type.STRING },
+                  contextEn: { type: Type.STRING },
+                },
+                required: ["front", "back", "kind", "level"],
+              },
+            },
+          },
+          required: ["items"],
+        },
+      },
+    });
+
+    let items: any[] = [];
+    try {
+      const parsed = JSON.parse(response.text || "{}");
+      items = Array.isArray(parsed.items) ? parsed.items : [];
+    } catch (e) {
+      console.warn("[Vocabulary] parse hatasi:", e);
+    }
+
+    const allowedKinds = ["word", "phrasal_verb", "collocation", "idiom", "expression"];
+    const allowedLevels = ["A2", "B1", "B2", "C1", "C2"];
+    const seen = new Set<string>();
+
+    const cleaned = items
+      .filter((it) => it && typeof it.front === 'string' && typeof it.back === 'string')
+      .map((it) => ({
+        front: String(it.front).trim(),
+        back: String(it.back).trim(),
+        ipa: it.ipa ? String(it.ipa).trim() : undefined,
+        kind: allowedKinds.includes(it.kind) ? it.kind : 'word',
+        level: allowedLevels.includes(it.level) ? it.level : 'B2',
+        exampleEn: it.exampleEn ? String(it.exampleEn).trim() : undefined,
+        exampleTr: it.exampleTr ? String(it.exampleTr).trim() : undefined,
+        contextEn: it.contextEn ? String(it.contextEn).trim() : undefined,
+      }))
+      .filter((it) => {
+        if (!it.front || !it.back) return false;
+        const key = it.front.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, target);
+
+    res.json({ items: cleaned });
+  } catch (error: any) {
+    console.error("Error in /api/extract-vocabulary:", error);
+    const isQuota = isRateLimitError(error);
+    res.status(isQuota ? 429 : 500).json({
+      error: isQuota ? describeRateLimit(error) : formatErrorMessage(error, "Kelimeler ayiklanamadi."),
+    });
+  }
+});
+
 // 2. Phonetic & Grammar Analysis (Katman 2)
 app.post("/api/analyze-phonetics-grammar", async (req, res) => {
   try {
