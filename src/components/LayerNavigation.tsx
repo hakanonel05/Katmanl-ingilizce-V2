@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Sparkles, HelpCircle, Edit3, Mic, CheckCircle2, Award } from 'lucide-react';
+import { BookOpen, Sparkles, HelpCircle, Edit3, Mic, CheckCircle2, Award, Ear, Volume2, EyeOff, Headphones } from 'lucide-react';
 
 export interface LayerTab {
   id: number;
@@ -18,40 +18,61 @@ export const LAYER_TABS: LayerTab[] = [
   {
     id: 1,
     label: '1. Çift Dilli Okuma',
-    subLabel: 'Okuma & Anlamlandırma',
+    subLabel: 'Anlam Ağlarını Oturtma',
     icon: <BookOpen className="w-4 h-4" />
   },
   {
     id: 2,
-    label: '2. Fonetik & Gramer',
-    subLabel: 'Genelden Özele Analiz',
-    icon: <Sparkles className="w-4 h-4" />
+    label: '2. Aktif Dinleme',
+    subLabel: 'Sesi Yazıyla Eşleştirme',
+    icon: <Ear className="w-4 h-4" />
   },
   {
     id: 3,
-    label: '3. Anlama Kontrolü',
-    subLabel: 'Dinleme & İzleme Quizi',
-    icon: <HelpCircle className="w-4 h-4" />
+    label: '3. Sesli Okuma',
+    subLabel: 'Gölgeleme (Shadowing)',
+    icon: <Volume2 className="w-4 h-4" />
   },
   {
     id: 4,
-    label: '4. Özet & Yorum',
-    subLabel: 'İngilizce Yazma & Bağlam',
-    icon: <Edit3 className="w-4 h-4" />
+    label: '4. Altyazısız İzleme',
+    subLabel: 'Anlama Kontrolü',
+    icon: <EyeOff className="w-4 h-4" />
   },
   {
     id: 5,
-    label: '5. Sesli Anlatım',
+    label: '5. Sadece Dinleme',
+    subLabel: 'Görselsiz Ses Modu',
+    icon: <Headphones className="w-4 h-4" />
+  },
+  {
+    id: 6,
+    label: '6. Özet & Yorum',
+    subLabel: 'İngilizce Yazma',
+    icon: <Edit3 className="w-4 h-4" />
+  },
+  {
+    id: 7,
+    label: '7. Sesli Anlatım',
     subLabel: 'Konuşma Simülasyonu',
     icon: <Mic className="w-4 h-4" />
   },
   {
-    id: 6,
-    label: '6. Süreç & Hedefler',
-    subLabel: '20 Video Yol Haritası',
+    id: 8,
+    label: 'Ekstra: Fonetik & Gramer',
+    subLabel: 'Genelden Özele Analiz',
+    icon: <Sparkles className="w-4 h-4" />
+  },
+  {
+    id: 9,
+    label: 'Süreç & Hedefler',
+    subLabel: 'İlerleme Panosu',
     icon: <Award className="w-4 h-4" />
   }
 ];
+
+/** Metodolojinin çekirdeği 7 katman; 8 ekstra çalışma, 9 ise panodur. */
+export const CORE_LAYER_COUNT = 7;
 
 export const LayerNavigation: React.FC<LayerNavigationProps> = ({
   activeLayer,
@@ -60,7 +81,7 @@ export const LayerNavigation: React.FC<LayerNavigationProps> = ({
 }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-2">
         {LAYER_TABS.map((tab) => {
           const isActive = activeLayer === tab.id;
           const isCompleted = completedLayers.includes(tab.id);
