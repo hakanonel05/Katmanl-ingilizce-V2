@@ -174,7 +174,11 @@ async function buildLessonData(
     body: JSON.stringify({ videoInput: input, youtubeUrl: youtubeUrlInput }),
   });
   const sentData = await readJsonResponse(sentRes, 'Transkript alinamadi.');
-  if (!sentRes.ok) throw new Error(sentData.error || 'Transkript alinamadi.');
+  if (!sentRes.ok) {
+    // Sunucu gercek sebebi "reason" alaninda dondurur; teshis icin gorunur yap
+    const detail = sentData.reason ? ` (Sunucu: ${sentData.reason})` : '';
+    throw new Error((sentData.error || 'Transkript alınamadı.') + detail);
+  }
 
   const sentences: any[] = sentData.sentences || [];
   if (sentences.length === 0) throw new Error('Transkriptten cumle cikarilamadi.');
