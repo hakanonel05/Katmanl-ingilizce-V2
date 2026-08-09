@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { VocabCard, putCard, selectDueCards } from '../../lib/vocabStore';
+import { VocabCard, putCard, isNewCard } from '../../lib/vocabStore';
+import { bumpDailyCounter } from '../../lib/vocabSettings';
 import { FsrsScheduler, Rating, CardState, formatInterval } from '../../lib/fsrs';
 import { Volume2, RotateCcw, Check, Clock, PartyPopper, Pause, Play } from 'lucide-react';
 
@@ -42,9 +43,10 @@ export const FlashcardReview: React.FC<Props> = ({
   const [timeUp, setTimeUp] = useState(false);
   const startedRef = useRef<number>(Date.now());
 
-  // Kuyruğu ilk yüklemede kur
+  // Kuyruğu ilk yüklemede kur. Kartlar üst bileşende günlük sınırlara göre
+  // zaten süzülmüş halde geliyor.
   useEffect(() => {
-    setQueue(selectDueCards(cards));
+    setQueue(cards);
     startedRef.current = Date.now();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -85,6 +87,7 @@ export const FlashcardReview: React.FC<Props> = ({
   const grade = async (rating: Rating) => {
     if (!current) return;
     const now = Date.now();
+    const wasNew = isNewCard(current);
     const updated = { ...current, ...scheduler.reviewCard(current, rating, now) };
 
     try {
@@ -92,6 +95,9 @@ export const FlashcardReview: React.FC<Props> = ({
     } catch (err) {
       console.warn('Kart kaydedilemedi:', err);
     }
+
+    // Günlük sayaç: kart ilk kez çalışıldıysa "yeni", değilse "tekrar"
+    bumpDailyCounter(wasNew ? 'new' : 'review');
 
     setReviewedCount((c) => c + 1);
     if (rating === Rating.Again) setAgainCount((c) => c + 1);

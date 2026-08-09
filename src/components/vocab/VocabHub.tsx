@@ -13,11 +13,15 @@ import {
   computeStats,
   selectDueCards,
 } from '../../lib/vocabStore';
-import { CardState, FsrsScheduler } from '../../lib/fsrs';
+import { CardState } from '../../lib/fsrs';
+import {
+  VocabSettings, loadVocabSettings, saveVocabSettings,
+  DEFAULT_VOCAB_SETTINGS, getDailyCounter, resetDailyCounter,
+} from '../../lib/vocabSettings';
 import { FlashcardReview } from './FlashcardReview';
 import {
   Layers, Sparkles, Loader2, Search, Trash2, Play, BookMarked,
-  Filter, EyeOff, Eye, Download, AlertTriangle,
+  Filter, EyeOff, Eye, Download, AlertTriangle, Settings2, PlusCircle, X, Check,
 } from 'lucide-react';
 
 interface Props {
@@ -26,8 +30,6 @@ interface Props {
 }
 
 type Tab = 'lesson' | 'all' | 'study';
-
-const scheduler = new FsrsScheduler({ desiredRetention: 0.9 });
 
 const LEVELS: CardLevel[] = ['A2', 'B1', 'B2', 'C1', 'C2'];
 const KINDS: { value: CardKind; label: string }[] = [
@@ -51,6 +53,80 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
   const [kindFilter, setKindFilter] = useState<CardKind | 'all'>('all');
   const [lessonFilter, setLessonFilter] = useState<string>('all');
   const [studyScope, setStudyScope] = useState<'all' | 'lesson'>('all');
+
+  // Ayarlar ve manuel kart ekleme
+  const [settings, setSettings] = useState<VocabSettings>(() => loadVocabSettings());
+  const [showSettings, setShowSettings] = useState(false);
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualFront, setManualFront] = useState('');
+  const [manualBack, setManualBack] = useState('');
+  const [manualLevel, setManualLevel] = useState<CardLevel>('B2');
+  const [manualKind, setManualKind] = useState<CardKind>('word');
+  const [manualExample, setManualExample] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [daily, setDaily] = useState(() => getDailyCounter());
+
+  const updateSettings = (patch: Partial<VocabSettings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    saveVocabSettings(next);
+  };
+
+  /** Yapay zekadan anlamı doldurmasını iste. */
+  const autoFillManual = async () => {
+    if (!manualFront.trim()) return;
+    setManualBusy(true);
+    setManualError(null);
+    try {
+      const res = await fetch('/api/define-word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word: manualFront.trim() }),
+      });
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error('Sunucu beklenmeyen bir yanıt döndürdü.');
+      }
+      if (!res.ok) throw new Error(data.error || 'Anlam getirilemedi.');
+
+      setManualFront(data.front || manualFront);
+      setManualBack(data.back || '');
+      if (data.level) setManualLevel(data.level);
+      if (data.kind) setManualKind(data.kind);
+      if (data.exampleEn) setManualExample(data.exampleEn);
+    } catch (err: any) {
+      setManualError(err?.message || 'Anlam getirilemedi.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const saveManualCard = async () => {
+    if (!manualFront.trim() || !manualBack.trim()) return;
+    try {
+      const card = buildCard({
+        lessonId: lesson?.id || 'manuel',
+        lessonTitle: lesson?.title || 'Elle Eklenenler',
+        front: manualFront.trim(),
+        back: manualBack.trim(),
+        kind: manualKind,
+        level: manualLevel,
+        exampleEn: manualExample.trim() || undefined,
+      });
+      await addCardsIfMissing([card]);
+      await refresh();
+      setManualFront('');
+      setManualBack('');
+      setManualExample('');
+      setShowManualAdd(false);
+    } catch (err: any) {
+      setManualError(err?.message || 'Kart eklenemedi.');
+    }
+  };
 
   const refresh = async () => {
     try {
@@ -82,7 +158,7 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
       const res = await fetch('/api/extract-vocabulary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, count: 20 }),
+        body: JSON.stringify({ text, count: settings.extractCount }),
       });
 
       const raw = await res.text();
@@ -147,6 +223,19 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
     [studyScope, lessonCards, allCards]
   );
 
+  /** Günlük sınırlar düşülmüş, bugün gerçekten çalışılabilecek kartlar. */
+  const limitedPool = useMemo(() => {
+    const newRemaining =
+      settings.newCardsPerDay > 0
+        ? Math.max(0, settings.newCardsPerDay - daily.newIntroduced)
+        : 0;
+    const reviewRemaining =
+      settings.reviewsPerDay > 0
+        ? Math.max(0, settings.reviewsPerDay - daily.reviewsDone)
+        : 0;
+    return selectDueCards(studyPool, Date.now(), { newRemaining, reviewRemaining });
+  }, [studyPool, settings.newCardsPerDay, settings.reviewsPerDay, daily]);
+
   const stats = useMemo(() => computeStats(studyPool), [studyPool]);
   const lessonStats = useMemo(() => computeStats(lessonCards), [lessonCards]);
   const globalStats = useMemo(() => computeStats(allCards), [allCards]);
@@ -192,11 +281,32 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
     <div className="space-y-5">
       {/* Başlık */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-        <div className="flex items-center space-x-2.5">
-          <span className="px-2.5 py-1 bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold rounded-md uppercase tracking-wider">
-            Kelime
-          </span>
-          <h2 className="text-base sm:text-lg font-bold text-slate-900">Kelime Kartları</h2>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center space-x-2.5">
+            <span className="px-2.5 py-1 bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold rounded-md uppercase tracking-wider">
+              Kelime
+            </span>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">Kelime Kartları</h2>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowManualAdd(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Kart Ekle</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettings((v) => !v)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Ayarlar</span>
+            </button>
+          </div>
         </div>
         <p className="text-xs text-slate-600 leading-relaxed">
           Kartlar <strong>FSRS-6</strong> algoritmasıyla planlanıyor (Anki ile aynı algoritma,
@@ -230,6 +340,233 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
           ))}
         </div>
       </div>
+
+      {/* Ayarlar paneli */}
+      {showSettings && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-900">Çalışma Ayarları</h3>
+            <button
+              type="button"
+              onClick={() => setShowSettings(false)}
+              className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 block">
+                Günlük yeni kart sınırı
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={500}
+                value={settings.newCardsPerDay}
+                onChange={(e) => updateSettings({ newCardsPerDay: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-teal-500"
+              />
+              <p className="text-[10px] text-slate-500">
+                Bugün {daily.newIntroduced} yeni kart gördünüz. 0 yazarsanız sınırsız olur.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 block">
+                Günlük tekrar sınırı
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={2000}
+                value={settings.reviewsPerDay}
+                onChange={(e) => updateSettings({ reviewsPerDay: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-teal-500"
+              />
+              <p className="text-[10px] text-slate-500">
+                Bugün {daily.reviewsDone} tekrar yaptınız. 0 = sınırsız (önerilen).
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 block">
+                Oturum süresi (dakika)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={180}
+                value={settings.sessionMinutes}
+                onChange={(e) => updateSettings({ sessionMinutes: Math.max(1, parseInt(e.target.value, 10) || 15) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 block">
+                Ayıklamada istenecek kelime sayısı
+              </label>
+              <input
+                type="number"
+                min={8}
+                max={40}
+                value={settings.extractCount}
+                onChange={(e) => updateSettings({ extractCount: Math.min(40, Math.max(8, parseInt(e.target.value, 10) || 20)) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-teal-500"
+              />
+              <p className="text-[10px] text-slate-500">
+                En fazla 40. Kısa videolarda model bu sayıya ulaşamayabilir.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={() => {
+                resetDailyCounter();
+                setDaily(getDailyCounter());
+              }}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg cursor-pointer"
+            >
+              Günlük sayacı sıfırla
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettings({ ...DEFAULT_VOCAB_SETTINGS });
+                saveVocabSettings({ ...DEFAULT_VOCAB_SETTINGS });
+              }}
+              className="px-3 py-1.5 text-[11px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+            >
+              Varsayılanlara dön
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Manuel kart ekleme */}
+      {showManualAdd && (
+        <div className="fixed inset-0 bg-slate-900/40 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">Elle Kart Ekle</h3>
+              <button
+                type="button"
+                onClick={() => setShowManualAdd(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-600">İngilizce ifade</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualFront}
+                  onChange={(e) => setManualFront(e.target.value)}
+                  placeholder="örn. come across"
+                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm font-bold focus:outline-none focus:border-teal-500"
+                />
+                <button
+                  type="button"
+                  onClick={autoFillManual}
+                  disabled={!manualFront.trim() || manualBusy}
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer"
+                  title="Anlamı ve örneği yapay zeka doldursun"
+                >
+                  {manualBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  <span>Doldur</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-600">Türkçe karşılık</label>
+              <input
+                type="text"
+                value={manualBack}
+                onChange={(e) => setManualBack(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">Seviye</label>
+                <select
+                  value={manualLevel}
+                  onChange={(e) => setManualLevel(e.target.value as CardLevel)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  {LEVELS.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">Tür</label>
+                <select
+                  value={manualKind}
+                  onChange={(e) => setManualKind(e.target.value as CardKind)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  {KINDS.map((k) => (
+                    <option key={k.value} value={k.value}>{k.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-600">Örnek cümle (isteğe bağlı)</label>
+              <input
+                type="text"
+                value={manualExample}
+                onChange={(e) => setManualExample(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <p className="text-[10px] text-slate-500">
+              Kart {lesson ? `"${lesson.title.slice(0, 40)}"` : '"Elle Eklenenler"'} altına eklenecek.
+            </p>
+
+            {manualError && (
+              <p className="text-[11px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded px-2.5 py-1.5">
+                {manualError}
+              </p>
+            )}
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={saveManualCard}
+                disabled={!manualFront.trim() || !manualBack.trim()}
+                className="flex-1 flex items-center justify-center space-x-1.5 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Ekle</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManualAdd(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Vazgeç
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* BU DERS */}
       {tab === 'lesson' && (
@@ -447,16 +784,40 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
                 Sadece Bu Ders ({lessonStats.due})
               </button>
             </div>
-            <span className="text-[11px] text-slate-500">Günlük hedef: 15 dakika</span>
+            <span className="text-[11px] text-slate-500">
+              Günlük hedef: {settings.sessionMinutes} dk · Bugün {daily.newIntroduced}
+              {settings.newCardsPerDay > 0 ? `/${settings.newCardsPerDay}` : ''} yeni kart
+            </span>
           </div>
 
-          <FlashcardReview
-            key={`${studyScope}-${studyPool.length}`}
-            cards={studyPool}
-            sessionMinutes={15}
-            onCardUpdated={refresh}
-            onExit={() => setTab('all')}
-          />
+          {limitedPool.length === 0 && studyPool.some((c) => c.due <= Date.now()) ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center space-y-2">
+              <h3 className="text-sm font-bold text-slate-900">Günlük sınıra ulaşıldı</h3>
+              <p className="text-xs text-slate-600 max-w-md mx-auto">
+                Bugün için ayarladığınız yeni kart sınırına ({settings.newCardsPerDay})
+                ulaştınız. Daha fazla çalışmak isterseniz Ayarlar'dan sınırı yükseltin
+                veya günlük sayacı sıfırlayın.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg cursor-pointer"
+              >
+                Ayarları Aç
+              </button>
+            </div>
+          ) : (
+            <FlashcardReview
+              key={`${studyScope}-${limitedPool.length}-${settings.sessionMinutes}`}
+              cards={limitedPool}
+              sessionMinutes={settings.sessionMinutes}
+              onCardUpdated={() => {
+                refresh();
+                setDaily(getDailyCounter());
+              }}
+              onExit={() => setTab('all')}
+            />
+          )}
         </div>
       )}
     </div>
