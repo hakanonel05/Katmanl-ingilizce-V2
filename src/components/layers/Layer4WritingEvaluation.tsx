@@ -58,7 +58,7 @@ export const Layer4WritingEvaluation: React.FC<Layer4WritingEvaluationProps> = (
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
         <div className="flex items-center space-x-2.5">
           <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-md uppercase tracking-wider">
-            Layer 4
+            Layer 6
           </span>
           <h2 className="text-base sm:text-lg font-bold text-slate-900">İngilizce Özet ve Yorum Değerlendirmesi</h2>
         </div>
@@ -220,7 +220,7 @@ export const Layer4WritingEvaluation: React.FC<Layer4WritingEvaluationProps> = (
               className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm rounded-xl transition shadow-sm cursor-pointer"
             >
               <CheckCircle className="w-4 h-4" />
-              <span>4. Katmanı Tamamladım, 5. Katmana Geç</span>
+              <span>6. Katmanı Tamamladım, 7. Katmana Geç</span>
             </button>
           </div>
         </div>

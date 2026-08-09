@@ -184,7 +184,7 @@ export const Layer5SpeakingSimulation: React.FC<Layer5SpeakingSimulationProps> =
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
         <div className="flex items-center space-x-2.5">
           <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-md uppercase tracking-wider">
-            Layer 5
+            Layer 7
           </span>
           <h2 className="text-base sm:text-lg font-bold text-slate-900">Konuşma ve Sesli Anlatım Simülasyonu</h2>
         </div>
@@ -326,7 +326,7 @@ export const Layer5SpeakingSimulation: React.FC<Layer5SpeakingSimulationProps> =
       ) : (
         <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-xl text-center space-y-3 shadow-sm">
           <Award className="w-10 h-10 text-emerald-600 mx-auto" />
-          <h3 className="text-lg font-bold text-slate-900">Tebrikler! 5. Katman Konuşma Simülasyonunu Tamamladınız!</h3>
+          <h3 className="text-lg font-bold text-slate-900">Tebrikler! 7. Katman Konuşma Simülasyonunu Tamamladınız!</h3>
           <p className="text-xs text-slate-600 max-w-xl mx-auto">
             3 soruluk karşılıklı konuşma pratiğini başarıyla gerçekleştirdiniz. Kendi kendinize 10-15 kez sesli anlatım tekrarı yapmayı unutmayın!
           </p>

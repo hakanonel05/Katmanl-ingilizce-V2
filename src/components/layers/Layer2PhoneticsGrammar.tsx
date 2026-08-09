@@ -76,7 +76,7 @@ export const Layer2PhoneticsGrammar: React.FC<Layer2PhoneticsGrammarProps> = ({
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center space-x-2.5">
             <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-md uppercase tracking-wider">
-              Layer 2
+              Ekstra
             </span>
             <h2 className="text-base sm:text-lg font-bold text-slate-900">Fonetik ve Gramer Analizi (Genelden Özele)</h2>
           </div>
@@ -280,7 +280,7 @@ export const Layer2PhoneticsGrammar: React.FC<Layer2PhoneticsGrammarProps> = ({
           className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm rounded-xl transition shadow-sm cursor-pointer"
         >
           <CheckCircle className="w-4 h-4" />
-          <span>2. Katmanı Tamamladım, 3. Katmana Geç</span>
+          <span>Ekstra Çalışmayı Tamamladım</span>
         </button>
       </div>
     </div>

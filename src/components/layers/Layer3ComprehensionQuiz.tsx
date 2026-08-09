@@ -82,7 +82,7 @@ export const Layer3ComprehensionQuiz: React.FC<Layer3ComprehensionQuizProps> = (
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center space-x-2.5">
             <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-md uppercase tracking-wider">
-              Layer 3
+              Layer 4
             </span>
             <h2 className="text-base sm:text-lg font-bold text-slate-900">Anlama Kontrolü (Altyazısız İzleme & Dinleme)</h2>
           </div>
@@ -147,7 +147,7 @@ export const Layer3ComprehensionQuiz: React.FC<Layer3ComprehensionQuizProps> = (
         {quizQuestions.length === 0 ? (
           <div className="bg-white border border-slate-200 p-8 rounded-xl text-center space-y-3 shadow-sm">
             <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-            <h3 className="text-sm font-bold text-slate-800">3. Katman Anlama Testi Arka Planda Oluşturuluyor...</h3>
+            <h3 className="text-sm font-bold text-slate-800">Anlama Testi Arka Planda Oluşturuluyor...</h3>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               Gemini AI transkript içeriğini analiz ederek 5 özel anlama sorusu hazırlıyor. Birkaç saniye içinde tamamlanacaktır.
             </p>
@@ -274,7 +274,7 @@ export const Layer3ComprehensionQuiz: React.FC<Layer3ComprehensionQuizProps> = (
             className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm rounded-xl transition shadow-sm cursor-pointer"
           >
             <CheckCircle className="w-4 h-4" />
-            <span>3. Katmanı Tamamladım, 4. Katmana Geç</span>
+            <span>4. Katmanı Tamamladım, 5. Katmana Geç</span>
           </button>
         </div>
       )}
