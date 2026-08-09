@@ -84,6 +84,8 @@ export interface UserProgress {
   goalVideoCount: number;
   studyStreakDays: number;
   lastStudyDate: string;
+  /** Calisma yapilan gunler (YYYY-MM-DD). Seri bu listeden hesaplanir. */
+  studyDates?: string[];
   bookmarkedWords: { word: string; enContext: string; trContext: string }[];
   weeklyStudyMinutes?: { day: string; date?: string; minutes: number }[];
 }
