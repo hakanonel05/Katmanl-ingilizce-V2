@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PRESET_LESSONS } from './data/presetLessons';
 import { VideoLesson, UserProgress, VocabularyItem, GrammarRuleItem, QuizQuestion } from './types';
 import { Header } from './components/Header';
@@ -19,6 +19,41 @@ import { extractYouTubeId } from './lib/youtube';
 // Anahtar değiştiği için eski dersler otomatik devre dışı kalır ve
 // kullanıcının localStorage'ı elle temizlemesine gerek kalmaz.
 const LESSONS_STORAGE_KEY = 'layered_learning_lessons_v2';
+const PROGRESS_STORAGE_KEY = 'layered_learning_progress_v1';
+
+/** Bugunun tarihi, YYYY-MM-DD (yerel saat). */
+function todayKey(date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Ardisik calisma gunu sayisini hesaplar.
+ * Seri bugunden veya dunden geriye dogru kesintisiz devam ettigi surece sayilir;
+ * bir gun atlanirsa sifirlanir. Boylece sayi gercek kullanimi yansitir.
+ */
+function calculateStreak(dates: string[]): number {
+  if (!dates || dates.length === 0) return 0;
+
+  const unique = Array.from(new Set(dates)).sort().reverse();
+  const today = todayKey();
+  const yesterday = todayKey(new Date(Date.now() - 86400000));
+
+  // Seri ancak bugun veya dun calisilmissa canlidir
+  if (unique[0] !== today && unique[0] !== yesterday) return 0;
+
+  let streak = 1;
+  for (let i = 1; i < unique.length; i++) {
+    const prev = new Date(unique[i - 1] + 'T00:00:00');
+    const curr = new Date(unique[i] + 'T00:00:00');
+    const diffDays = Math.round((prev.getTime() - curr.getTime()) / 86400000);
+    if (diffDays === 1) streak++;
+    else break;
+  }
+  return streak;
+}
 
 export default function App() {
   const [lessons, setLessons] = useState<VideoLesson[]>(() => {
@@ -51,11 +86,19 @@ export default function App() {
     }
   }, [lessons]);
 
-  const [progress, setProgress] = useState<UserProgress>({
-    completedVideoCount: 1,
+  const [progress, setProgress] = useState<UserProgress>(() => {
+    try {
+      const saved = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to load progress:', e);
+    }
+    return {
+    completedVideoCount: 0,
     goalVideoCount: 20,
-    studyStreakDays: 3,
+    studyStreakDays: 0,
     lastStudyDate: new Date().toISOString(),
+    studyDates: [],
     bookmarkedWords: [
       {
         word: 'Holistic',
@@ -63,9 +106,51 @@ export default function App() {
         trContext: 'Katmanlı çalışma dil edinimine bütüncül bir yaklaşım getirir.',
       },
     ],
+    };
   });
 
+  // Ilerlemeyi kalici sakla
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+    } catch (e) {
+      console.error('Failed to save progress:', e);
+    }
+  }, [progress]);
+
+  /** Bugunu calisma gunu olarak isaretler ve seriyi yeniden hesaplar. */
+  const recordStudyToday = () => {
+    setProgress((prev) => {
+      const dates = Array.from(new Set([...(prev.studyDates || []), todayKey()]));
+      return {
+        ...prev,
+        studyDates: dates,
+        studyStreakDays: calculateStreak(dates),
+        lastStudyDate: new Date().toISOString(),
+      };
+    });
+  };
+
+  /** Hedef ve seri gibi degerleri kullanicinin duzenlemesine izin verir. */
+  const handleUpdateProgress = (patch: Partial<UserProgress>) => {
+    setProgress((prev) => ({ ...prev, ...patch }));
+  };
+
   const activeLesson = lessons.find((l) => l.id === activeLessonId) || lessons[0] || null;
+
+  /**
+   * Tamamlanan video sayisi artik sayacla degil, derslerin gercek durumundan
+   * turetiliyor. Boylece ders silinince veya katman geri alininca sayi da
+   * dogru kaliyor; ayni dersi iki kez bitirmek sayiyi sisirmiyor.
+   */
+  const displayProgress: UserProgress = useMemo(() => {
+    const completed = lessons.filter((l) => l.completedLayers?.includes(5)).length;
+    return {
+      ...progress,
+      completedVideoCount: completed,
+      studyStreakDays: calculateStreak(progress.studyDates || []),
+    };
+  }, [lessons, progress]);
 
   // Delete Lesson handler
   const handleDeleteLesson = (lessonId: string) => {
@@ -120,13 +205,8 @@ export default function App() {
       })
     );
 
-    // If layer 5 completed, increment completed video count
-    if (layerNum === 5) {
-      setProgress((prev) => ({
-        ...prev,
-        completedVideoCount: Math.min(20, prev.completedVideoCount + 1),
-      }));
-    }
+    // Herhangi bir katman tamamlandiginda bugun "calisilmis" sayilir
+    recordStudyToday();
 
     // Move to next layer if not at max
     if (layerNum < 6) {
@@ -418,7 +498,8 @@ async function buildLessonData(
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950 flex flex-col antialiased">
       {/* Top Header */}
       <Header
-        progress={progress}
+        progress={displayProgress}
+        onUpdateProgress={handleUpdateProgress}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenGrammarCoach={() => setIsGrammarCoachOpen(true)}
       />
@@ -508,7 +589,7 @@ async function buildLessonData(
 
               {activeLayer === 6 && (
                 <ProgressDashboard
-                  progress={progress}
+                  progress={displayProgress}
                   lessons={lessons}
                   onSelectLesson={(lesson) => {
                     setActiveLessonId(lesson.id);
