@@ -152,7 +152,11 @@ export const SelectionToCard: React.FC<Props> = ({
       });
       const added = await addCardsIfMissing([card]);
       setDraft(null);
-      setSavedMsg(added > 0 ? `"${card.front}" kartlara eklendi` : `"${card.front}" zaten kartlarında var`);
+      setSavedMsg(
+        added > 0
+          ? `"${card.front}" → ${lessonTitle} dersine eklendi`
+          : `"${card.front}" zaten bu derste kayıtlı`
+      );
       window.getSelection()?.removeAllRanges();
       onAdded?.();
       setTimeout(() => setSavedMsg(null), 3000);
@@ -265,6 +269,11 @@ export const SelectionToCard: React.FC<Props> = ({
                 {draft.exampleTr && <p className="text-[11px] text-slate-600">{draft.exampleTr}</p>}
               </div>
             )}
+
+            <p className="text-[10px] text-slate-500">
+              Kart <strong>{lessonTitle}</strong> dersine eklenecek. Kelime Kartları
+              sekmesinde &quot;Bu Ders&quot; veya &quot;Tüm Kartlar&quot; altında görünür.
+            </p>
 
             {error && (
               <p className="text-[11px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded px-2.5 py-1.5">
