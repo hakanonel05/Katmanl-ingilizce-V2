@@ -12,6 +12,7 @@ import {
   putCard,
   computeStats,
   selectDueCards,
+  VOCAB_CHANGED_EVENT,
 } from '../../lib/vocabStore';
 import { CardState } from '../../lib/fsrs';
 import {
@@ -138,6 +139,22 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
 
   useEffect(() => {
     refresh();
+
+    // Kart başka bir ekrandan eklenmiş olabilir (transkriptte seçim gibi).
+    // Hem depo olayını hem de sekmeye geri dönüşü dinliyoruz.
+    const onChanged = () => refresh();
+    const onFocus = () => refresh();
+
+    window.addEventListener(VOCAB_CHANGED_EVENT, onChanged);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
+    return () => {
+      window.removeEventListener(VOCAB_CHANGED_EVENT, onChanged);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const lessonCards = useMemo(
@@ -316,8 +333,8 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
 
         <div className="flex items-center gap-1.5 border-b border-slate-200 -mb-4 pt-1">
           {([
-            ['lesson', 'Bu Ders'],
-            ['all', 'Tüm Kartlar'],
+            ['lesson', `Bu Ders (${lessonCards.length})`],
+            ['all', `Tüm Kartlar (${allCards.length})`],
             ['study', 'Çalış'],
           ] as [Tab, string][]).map(([value, label]) => (
             <button
@@ -422,7 +439,48 @@ export const VocabHub: React.FC<Props> = ({ lesson, lessons }) => {
             </div>
           </div>
 
+          {/* Teşhis: kartların gerçekte hangi derse yazıldığını gösterir */}
+          <div className="pt-3 border-t border-slate-200 space-y-1.5">
+            <h4 className="text-[11px] font-bold text-slate-700">
+              Kart dağılımı (veritabanındaki gerçek durum)
+            </h4>
+            {allCards.length === 0 ? (
+              <p className="text-[11px] text-slate-500">Veritabanında hiç kart yok.</p>
+            ) : (
+              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                {Object.entries(
+                  allCards.reduce((acc: Record<string, number>, c) => {
+                    const key = `${c.lessonTitle} [${c.lessonId}]`;
+                    acc[key] = (acc[key] || 0) + 1;
+                    return acc;
+                  }, {})
+                ).map(([key, count]) => (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between text-[11px] bg-slate-50 border border-slate-200 rounded px-2 py-1"
+                  >
+                    <span className="truncate text-slate-700">{key}</span>
+                    <span className="font-bold text-slate-900 shrink-0 ml-2">{count}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[10px] text-slate-500">
+              Toplam {allCards.length} kart.
+              {lesson
+                ? ` Aktif ders: ${lesson.title} [${lesson.id}] — ${lessonCards.length} kart.`
+                : ' Aktif ders seçili değil.'}
+            </p>
+          </div>
+
           <div className="flex items-center gap-2 pt-1 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={refresh}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg cursor-pointer"
+            >
+              Listeyi yenile
+            </button>
             <button
               type="button"
               onClick={() => {
