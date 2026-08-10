@@ -323,6 +323,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
         containerRef={transcriptAreaRef}
         lessonId={lesson.id}
         lessonTitle={lesson.title}
+        onAdded={() => { /* VocabHub depo olayıyla kendini tazeliyor */ }}
       />
 
       {/* Control Header */}

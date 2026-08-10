@@ -54,6 +54,7 @@ export const Layer2ActiveListening: React.FC<Props> = ({ lesson, onCompleteLayer
         containerRef={transcriptAreaRef}
         lessonId={lesson.id}
         lessonTitle={lesson.title}
+        onAdded={() => { /* VocabHub depo olayıyla kendini tazeliyor */ }}
       />
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
