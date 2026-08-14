@@ -56,151 +56,70 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="bg-[#0F172A] border-b border-slate-800 text-white sticky top-0 z-30 shadow-sm">
-      <div className="max-w-[1920px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
-        {/* Brand Title */}
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-900/30 font-black">
-            <Layers className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                Katmanlı Çalışma
-              </h1>
-              <span className="text-[11px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-md font-semibold tracking-wide uppercase">
-                Gemini Coach
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 hidden sm:block">
-              7-Layered English Learning System
-            </p>
-          </div>
+    <header className="bg-[var(--paper)] border-b border-[var(--hairline)] sticky top-0 z-30">
+      <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+        {/* Marka — kelime işareti, ikon kutusu yok */}
+        <div className="flex items-baseline gap-3 min-w-0">
+          <span className="font-display text-[19px] sm:text-[21px] font-medium text-[var(--ink)] whitespace-nowrap">
+            Katmanlı <em className="italic font-light text-[var(--ink-2)]">İngilizce</em>
+          </span>
+          <span className="eyebrow hidden lg:inline">Yedi Katmanlı Çalışma</span>
         </div>
 
-        {/* Progress & Quick Tools */}
-        <div className="flex items-center space-x-3 sm:space-x-4 relative">
-          {/* Streak Counter */}
+        {/* Ölçüler ve araçlar */}
+        <div className="flex items-center gap-1 sm:gap-2 relative">
+          {/* Seri ve hedef: tek bir sayı şeridi */}
           <button
             type="button"
             onClick={openEditor}
-            className="flex items-center space-x-1.5 bg-slate-800/80 hover:bg-slate-700/80 px-3 py-1.5 rounded-lg border border-slate-700/80 text-xs text-amber-400 font-semibold transition cursor-pointer"
-            title="Seriyi ve hedefi düzenle"
+            title="Hedefi ve seriyi düzenle"
+            className="group flex items-stretch divide-x divide-[var(--hairline)] border border-[var(--hairline)] rounded-[10px] overflow-hidden hover:border-[var(--hairline-2)] transition-colors cursor-pointer"
           >
-            <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
-            <span>{progress.studyStreakDays} Gün Seri</span>
-          </button>
+            <span className="flex flex-col items-start px-3 py-1.5 leading-tight">
+              <span className="timecode text-[var(--ink)] font-medium">
+                {progress.studyStreakDays}
+              </span>
+              <span className="text-[9px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
+                gün seri
+              </span>
+            </span>
 
-          {/* Video Goal Counter */}
-          <button
-            type="button"
-            onClick={openEditor}
-            className="flex items-center space-x-2.5 bg-slate-800/80 hover:bg-slate-700/80 px-3 py-1.5 rounded-lg border border-slate-700/80 transition cursor-pointer"
-            title="Hedefi düzenle"
-          >
-            <Award className="w-4 h-4 text-indigo-400" />
-            <div className="text-xs">
-              <div className="flex justify-between items-center space-x-2 text-slate-300 font-medium">
-                <span>Hedef: <strong className="text-indigo-300 font-bold">{progress.completedVideoCount}/{progress.goalVideoCount}</strong> Video</span>
-              </div>
-              <div className="w-20 bg-slate-700 rounded-full h-1.5 mt-1 overflow-hidden">
-                <div
-                  className="bg-indigo-500 h-1.5 rounded-full transition-all duration-500"
+            <span className="flex flex-col items-start px-3 py-1.5 leading-tight">
+              <span className="timecode text-[var(--ink)] font-medium">
+                {progress.completedVideoCount}<span className="text-[var(--ink-3)]">/{progress.goalVideoCount}</span>
+              </span>
+              <span className="text-[9px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
+                video
+              </span>
+            </span>
+
+            {/* İlerleme: ince dikey şerit */}
+            <span className="hidden sm:flex items-center px-2.5">
+              <span className="w-14 h-[3px] bg-[var(--hairline)] rounded-full overflow-hidden">
+                <span
+                  className="block h-full bg-[var(--ink)] transition-all duration-500"
                   style={{ width: `${goalPercentage}%` }}
                 />
-              </div>
-            </div>
-            <Settings2 className="w-3.5 h-3.5 text-slate-500" />
+              </span>
+            </span>
           </button>
 
-          {/* Düzenleme Paneli */}
-          {isEditing && onUpdateProgress && (
-            <div className="absolute top-full right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 z-50 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">Hedef ve Seri</h3>
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="p-1 text-slate-400 hover:text-white cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300 block">
-                  Video Hedefi
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={999}
-                  value={goalDraft}
-                  onChange={(e) => setGoalDraft(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-                />
-                <p className="text-[11px] text-slate-500">
-                  Şu an {progress.completedVideoCount} video tamamlandı. Bu sayı
-                  derslerin gerçek durumundan hesaplanıyor.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300 block">
-                  Çalışma Serisi (gün)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={9999}
-                  value={streakDraft}
-                  onChange={(e) => setStreakDraft(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-                />
-                <p className="text-[11px] text-slate-500">
-                  Seri normalde otomatik sayılıyor: bir katman tamamladığın her gün
-                  işaretleniyor, bir gün atlarsan sıfırlanıyor. Buradan elle de
-                  ayarlayabilirsin.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2 pt-1">
-                <button
-                  type="button"
-                  onClick={saveEdits}
-                  className="flex-1 flex items-center justify-center space-x-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Kaydet</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg transition cursor-pointer"
-                >
-                  Vazgeç
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons */}
           <button
             onClick={onOpenGrammarCoach}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
-            title="Genelden Özele Gramer Asistanı"
+            title="Gramer koçuna sor"
+            className="flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] bg-[var(--ink)] text-[var(--paper-2)] text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer shrink-0 whitespace-nowrap"
           >
-            <Sparkles className="w-4 h-4 text-indigo-200" />
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden md:inline">Gramer Koçu</span>
           </button>
 
           <button
             onClick={onOpenGuide}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition cursor-pointer"
-            title="Yöntem Rehberi ve 7 Katman Özeti"
+            title="Yöntem rehberi"
+            className="flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] border border-[var(--hairline)] text-[var(--ink-2)] text-xs font-medium hover:border-[var(--hairline-2)] hover:text-[var(--ink)] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
           >
-            <HelpCircle className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">Metot Rehberi</span>
+            <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Metot</span>
           </button>
         </div>
       </div>

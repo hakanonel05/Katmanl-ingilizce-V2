@@ -86,50 +86,67 @@ export const LayerNavigation: React.FC<LayerNavigationProps> = ({
   completedLayers,
 }) => {
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-2">
+    <nav aria-label="Katmanlar" className="border-y border-[var(--hairline)] bg-[var(--paper)]">
+      <div className="flex overflow-x-auto snap-x scrollbar-hide">
         {LAYER_TABS.map((tab) => {
           const isActive = activeLayer === tab.id;
           const isCompleted = completedLayers.includes(tab.id);
+          const isCore = tab.id <= CORE_LAYER_COUNT;
 
           return (
             <button
               key={tab.id}
               onClick={() => onSelectLayer(tab.id)}
-              className={`relative flex flex-col items-start p-3 rounded-lg border text-left transition-all cursor-pointer ${
+              aria-current={isActive ? 'step' : undefined}
+              className={`group relative shrink-0 snap-start text-left px-4 sm:px-5 py-3.5 border-r border-[var(--hairline)] last:border-r-0 transition-colors cursor-pointer min-w-[132px] ${
                 isActive
-                  ? 'bg-slate-900 text-white border-slate-900 border-l-4 border-l-indigo-500 shadow-sm'
-                  : isCompleted
-                  ? 'bg-indigo-50/60 text-indigo-900 border-indigo-200/80 hover:bg-indigo-100/50'
-                  : 'bg-slate-50 text-slate-700 border-slate-200/80 hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-[var(--paper-2)]'
+                  : 'bg-transparent hover:bg-[var(--paper-3)]'
               }`}
             >
-              {/* Checkmark Badge if completed */}
-              {isCompleted && !isActive && (
-                <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 absolute top-2.5 right-2.5" />
-              )}
+              {/* Aktif katman: üstte tek çizgi. Vurgu için kutu değil, kenar. */}
+              <span
+                className={`absolute left-0 right-0 top-0 h-[2px] transition-colors ${
+                  isActive ? 'bg-[var(--ink)]' : 'bg-transparent'
+                }`}
+              />
 
-              <div className="flex items-center space-x-2 w-full mb-1">
-                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                  isActive ? 'bg-indigo-500/30 text-indigo-200' : 'bg-slate-200/70 text-slate-600'
-                }`}>
-                  0{tab.id}
+              <span className="flex items-center gap-2 mb-1.5">
+                {/* Numara: gerçek bir sıra bildirdiği için var */}
+                <span
+                  className={`timecode font-medium ${
+                    isActive ? 'text-[var(--ink)]' : 'text-[var(--ink-3)]'
+                  }`}
+                >
+                  {isCore ? String(tab.id).padStart(2, '0') : '··'}
                 </span>
-                <div className={`p-1 rounded ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
-                  {tab.icon}
-                </div>
-              </div>
 
-              <span className="text-xs font-bold leading-tight line-clamp-1">{tab.label}</span>
-              <span className={`text-[10px] mt-0.5 font-medium line-clamp-1 ${
-                isActive ? 'text-slate-300' : 'text-slate-500'
-              }`}>
+                {isCompleted && (
+                  <CheckCircle2
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      isActive ? 'text-[var(--ink)]' : 'text-[var(--ok)]'
+                    }`}
+                  />
+                )}
+              </span>
+
+              <span
+                className={`block text-[13px] leading-snug ${
+                  isActive
+                    ? 'text-[var(--ink)] font-medium'
+                    : 'text-[var(--ink-2)] group-hover:text-[var(--ink)]'
+                }`}
+              >
+                {tab.label.replace(/^\d+\.\s*/, '')}
+              </span>
+
+              <span className="block text-[11px] mt-0.5 text-[var(--ink-3)] leading-snug">
                 {tab.subLabel}
               </span>
             </button>
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 };
