@@ -202,7 +202,7 @@ export const FlashcardReview: React.FC<Props> = ({
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center space-x-2 text-xs">
             <Clock className="w-4 h-4 text-indigo-600" />
-            <span className="font-mono font-bold text-slate-900">
+            <span className="timecode text-slate-900 font-medium">
               {mm}:{ss}
             </span>
             <span className="text-slate-500">kaldı</span>
@@ -257,7 +257,7 @@ export const FlashcardReview: React.FC<Props> = ({
 
         <div className="p-6 sm:p-10 text-center space-y-4 min-h-[220px] flex flex-col justify-center">
           <div className="flex items-center justify-center gap-2">
-            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900">{current.front}</h2>
+            <h2 className="font-display text-3xl sm:text-4xl font-medium text-slate-900">{current.front}</h2>
             <button
               type="button"
               onClick={() => speak(current.front)}
@@ -272,7 +272,7 @@ export const FlashcardReview: React.FC<Props> = ({
 
           {showAnswer && (
             <div className="space-y-3 pt-3 border-t border-slate-200">
-              <p className="text-lg sm:text-xl font-bold text-indigo-700">{current.back}</p>
+              <p className="text-lg sm:text-xl font-medium text-slate-900">{current.back}</p>
 
               {current.exampleEn && (
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-left space-y-1">
