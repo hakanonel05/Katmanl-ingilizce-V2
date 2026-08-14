@@ -1,1 +1,197 @@
 @import "tailwindcss";
+
+/* =====================================================================
+   KATMANLI İNGİLİZCE — TASARIM SİSTEMİ
+
+   Yön: "altyazı defteri". Uygulamanın işi uzun metin okutmak, sesle
+   metni eşleştirmek ve ilerlemeyi göstermek. Bu yüzden:
+
+   - Tek renk vurgusu. Arayüzün tamamı kağıt/mürekkep tonlarında;
+     renk YALNIZCA "şu an konuşulan cümle" için ayrıldı. Böylece göz
+     ekranda tek bir şey arıyor ve onu anında buluyor.
+   - Zaman damgaları ve sayaçlar tek aralıklı yazı tipiyle, çünkü
+     onlar metin değil veri.
+   - Katman numaraları gerçek bir sıra bildirdiği için numaralı;
+     dekoratif değil.
+   ===================================================================== */
+
+:root {
+  /* Kağıt ve mürekkep */
+  --paper:      #FAFAF8;
+  --paper-2:    #FFFFFF;
+  --paper-3:    #F3F2EE;
+  --ink:        #17181B;
+  --ink-2:      #55575C;
+  --ink-3:      #8B8D93;
+  --hairline:   #E4E3DE;
+  --hairline-2: #D6D5CF;
+
+  /* Tek vurgu: canlı altyazı işareti */
+  --marker:     #F2C94C;
+  --marker-bg:  #FDF3D3;
+  --marker-ink: #6B5312;
+
+  /* Durum renkleri — sade tutuldu */
+  --ok:         #2E7D5B;
+  --ok-bg:      #E8F3EE;
+  --danger:     #A33A32;
+  --danger-bg:  #F8E9E7;
+
+  --radius:     10px;
+}
+
+html { background: var(--paper); }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--marker-bg);
+  color: var(--marker-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-2) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--hairline-2);
+  border-radius: 999px;
+}
+
+/* =====================================================================
+   TİPOGRAFİ
+   Newsreader: okuma için tasarlanmış editoryal serif — transkript.
+   IBM Plex Sans: arayüz.
+   IBM Plex Mono: zaman damgaları, sayaçlar, istatistik.
+   ===================================================================== */
+
+.font-display {
+  font-family: "Newsreader", ui-serif, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.transcript-en {
+  font-family: "Newsreader", ui-serif, Georgia, serif;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+}
+
+.timecode {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* =====================================================================
+   ESKİ PALETİN YENİDEN EŞLENMESİ
+
+   Uygulama boyunca slate/indigo/amber sınıfları kullanılmıştı. Her
+   bileşeni tek tek elden geçirmek yerine bu sınıfları yeni palete
+   eşliyoruz: tek noktadan tutarlılık, sıfır davranış riski.
+   Bu kurallar Tailwind'den sonra geldiği için kazanır.
+   ===================================================================== */
+
+/* --- Zeminler --- */
+.bg-slate-950, .bg-slate-900 { background-color: var(--ink) !important; }
+.bg-slate-800 { background-color: #26282C !important; }
+.bg-slate-100, .bg-slate-50 { background-color: var(--paper-3) !important; }
+.bg-white { background-color: var(--paper-2) !important; }
+.bg-slate-200 { background-color: var(--hairline) !important; }
+.bg-slate-700 { background-color: #3A3C41 !important; }
+
+/* --- Metin --- */
+.text-slate-900, .text-slate-950 { color: var(--ink) !important; }
+.text-slate-800, .text-slate-700, .text-slate-600, .text-slate-500 { color: var(--ink-2) !important; }
+.text-slate-400, .text-slate-300, .text-slate-200 { color: var(--ink-3) !important; }
+.text-white { color: var(--paper-2) !important; }
+
+/* --- Çizgiler: hepsi tek bir saç teli --- */
+.border-slate-200, .border-slate-300, .border-slate-600, .border-slate-700,
+.border-slate-800, .border-indigo-200, .border-teal-200, .border-emerald-200,
+.border-amber-200, .border-amber-300, .border-rose-200, .border-orange-200,
+.border-violet-200, .border-sky-200 {
+  border-color: var(--hairline) !important;
+}
+.divide-slate-200 > * + * { border-color: var(--hairline) !important; }
+
+/* --- Birincil eylem: mürekkep, renk değil --- */
+.bg-indigo-600, .bg-indigo-700, .bg-teal-600, .bg-teal-700 {
+  background-color: var(--ink) !important;
+}
+.hover\:bg-indigo-700:hover, .hover\:bg-teal-700:hover,
+.hover\:bg-slate-800:hover { background-color: #000 !important; }
+.text-indigo-600, .text-indigo-700, .text-indigo-800,
+.text-teal-600, .text-teal-700, .text-violet-700, .text-sky-700,
+.text-orange-700 { color: var(--ink) !important; }
+.bg-indigo-50, .bg-indigo-100, .bg-teal-50, .bg-teal-100,
+.bg-violet-50, .bg-sky-50, .bg-orange-50 { background-color: var(--paper-3) !important; }
+.bg-indigo-500 { background-color: var(--ink) !important; }
+
+/* --- Canlı altyazı: tek renkli an --- */
+.bg-amber-50, .bg-amber-100, .bg-amber-200, .bg-amber-50\/90, .bg-amber-50\/40 {
+  background-color: var(--marker-bg) !important;
+}
+.bg-amber-500, .bg-amber-600 { background-color: var(--marker) !important; }
+.text-amber-950, .text-amber-900, .text-amber-800 { color: var(--marker-ink) !important; }
+.text-amber-600, .text-amber-400 { color: #B08A22 !important; }
+.border-amber-500 { border-color: var(--marker) !important; }
+
+/* --- Durumlar --- */
+.bg-emerald-50, .bg-emerald-100 { background-color: var(--ok-bg) !important; }
+.bg-emerald-500, .bg-emerald-600 { background-color: var(--ok) !important; }
+.text-emerald-700, .text-emerald-800, .text-emerald-600, .text-emerald-400 { color: var(--ok) !important; }
+
+.bg-rose-50, .bg-rose-100 { background-color: var(--danger-bg) !important; }
+.bg-rose-500, .bg-rose-600 { background-color: var(--danger) !important; }
+.text-rose-600, .text-rose-700, .text-rose-800, .text-rose-900 { color: var(--danger) !important; }
+.hover\:bg-rose-700:hover { background-color: #8C2F28 !important; }
+
+/* --- Köşeler --- */
+.rounded-2xl { border-radius: 14px !important; }
+.rounded-xl  { border-radius: var(--radius) !important; }
+.rounded-lg  { border-radius: 8px !important; }
+
+/* --- Gölgeler: ayrım çizgiyle yapılır --- */
+.shadow-sm, .shadow, .shadow-md {
+  box-shadow: 0 1px 2px rgba(23, 24, 27, 0.04) !important;
+}
+.shadow-lg, .shadow-2xl {
+  box-shadow: 0 12px 32px rgba(23, 24, 27, 0.10) !important;
+}
+.shadow-inner { box-shadow: none !important; }
+
+/* Yatay kaydırma şeritlerinde çubuğu gizle (katman rayı, kart listeleri) */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
