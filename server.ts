@@ -1378,6 +1378,215 @@ Bu ifade icin kart bilgisi uret:
   }
 });
 
+/* ============================================================
+   SUPABASE SENKRONIZASYONU
+   ------------------------------------------------------------
+   GUVENLIK NOTU: Supabase anahtarlari YALNIZCA sunucuda tutulur;
+   tarayiciya hicbir zaman gonderilmez. Istemci kendi "senkron
+   kodunu" gonderir, sunucu bunu hash'leyip veri alanini (space)
+   belirler. Boylece giris ekrani olmadan da baskasinin verisine
+   erisilemez.
+   ============================================================ */
+
+import crypto from "crypto";
+
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+function supabaseReady(): boolean {
+  return !!(SUPABASE_URL && SUPABASE_SERVICE_KEY);
+}
+
+/**
+ * Senkron kodundan veri alani (space) uretir.
+ * Kod duz metin olarak saklanmaz; yalnizca hash'i veritabanina gider.
+ */
+function spaceFromCode(code: string): string {
+  const salt = process.env.SYNC_SALT || 'katmanli-ingilizce';
+  return crypto.createHash('sha256').update(`${salt}:${code}`).digest('hex').slice(0, 32);
+}
+
+function readSyncCode(req: any): string | null {
+  const code = String(req.body?.syncCode || req.query?.code || '').trim();
+  if (code.length < 6) return null;
+  return code;
+}
+
+async function supabaseFetch(path: string, init: any = {}): Promise<any> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...init,
+    headers: {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Supabase ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// Senkronun kullanilabilir olup olmadigini bildirir
+app.get("/api/sync/status", (_req, res) => {
+  res.json({ enabled: supabaseReady() });
+});
+
+// Degisiklikleri gonder (son yazan kazanir)
+app.post("/api/sync/push", async (req, res) => {
+  try {
+    if (!supabaseReady()) {
+      return res.status(503).json({ error: "Senkronizasyon yapilandirilmamis." });
+    }
+
+    const code = readSyncCode(req);
+    if (!code) {
+      return res.status(400).json({ error: "Senkron kodu en az 6 karakter olmali." });
+    }
+
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (items.length === 0) return res.json({ pushed: 0, serverTime: new Date().toISOString() });
+    if (items.length > 500) {
+      return res.status(400).json({ error: "Tek seferde en fazla 500 kayit gonderilebilir." });
+    }
+
+    const space = spaceFromCode(code);
+    const rows = items.map((it: any) => ({
+      space,
+      key: String(it.key),
+      value: it.value ?? {},
+      deleted: !!it.deleted,
+      updated_at: new Date().toISOString(),
+    }));
+
+    await supabaseFetch('sync_kv?on_conflict=space,key', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(rows),
+    });
+
+    res.json({ pushed: rows.length, serverTime: new Date().toISOString() });
+  } catch (error: any) {
+    console.error("Error in /api/sync/push:", error);
+    res.status(500).json({ error: formatErrorMessage(error, "Veriler gonderilemedi.") });
+  }
+});
+
+// Belirtilen tarihten sonraki degisiklikleri cek
+app.post("/api/sync/pull", async (req, res) => {
+  try {
+    if (!supabaseReady()) {
+      return res.status(503).json({ error: "Senkronizasyon yapilandirilmamis." });
+    }
+
+    const code = readSyncCode(req);
+    if (!code) {
+      return res.status(400).json({ error: "Senkron kodu en az 6 karakter olmali." });
+    }
+
+    const space = spaceFromCode(code);
+    const since = req.body?.since ? new Date(req.body.since).toISOString() : '1970-01-01T00:00:00Z';
+
+    const rows = await supabaseFetch(
+      `sync_kv?space=eq.${encodeURIComponent(space)}&updated_at=gt.${encodeURIComponent(since)}&select=key,value,deleted,updated_at&order=updated_at.asc&limit=2000`
+    );
+
+    res.json({
+      items: rows || [],
+      serverTime: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error("Error in /api/sync/pull:", error);
+    res.status(500).json({ error: formatErrorMessage(error, "Veriler alinamadi.") });
+  }
+});
+
+// Ses kaydi yukle (base64). Kayitlar kisa oldugu icin tek parcada gonderiliyor.
+app.post("/api/sync/upload-audio", async (req, res) => {
+  try {
+    if (!supabaseReady()) {
+      return res.status(503).json({ error: "Senkronizasyon yapilandirilmamis." });
+    }
+
+    const code = readSyncCode(req);
+    if (!code) return res.status(400).json({ error: "Senkron kodu gerekli." });
+
+    const { path, dataBase64 } = req.body || {};
+    if (!path || !dataBase64) {
+      return res.status(400).json({ error: "Dosya yolu ve veri gerekli." });
+    }
+
+    const buffer = Buffer.from(String(dataBase64), 'base64');
+    if (buffer.length > 4 * 1024 * 1024) {
+      return res.status(413).json({ error: "Ses kaydi cok buyuk (en fazla 4 MB)." });
+    }
+
+    const space = spaceFromCode(code);
+    const safePath = `${space}/${String(path).replace(/[^a-zA-Z0-9._/-]/g, '_')}`;
+
+    const upRes = await fetch(`${SUPABASE_URL}/storage/v1/object/recordings/${safePath}`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'audio/webm',
+        'x-upsert': 'true',
+      },
+      body: buffer,
+    });
+
+    if (!upRes.ok) {
+      const body = await upRes.text();
+      throw new Error(`Storage ${upRes.status}: ${body.slice(0, 200)}`);
+    }
+
+    res.json({ ok: true, path: safePath });
+  } catch (error: any) {
+    console.error("Error in /api/sync/upload-audio:", error);
+    res.status(500).json({ error: formatErrorMessage(error, "Ses kaydi yuklenemedi.") });
+  }
+});
+
+// Ses kaydi indir
+app.post("/api/sync/download-audio", async (req, res) => {
+  try {
+    if (!supabaseReady()) {
+      return res.status(503).json({ error: "Senkronizasyon yapilandirilmamis." });
+    }
+
+    const code = readSyncCode(req);
+    if (!code) return res.status(400).json({ error: "Senkron kodu gerekli." });
+
+    const { path } = req.body || {};
+    if (!path) return res.status(400).json({ error: "Dosya yolu gerekli." });
+
+    const space = spaceFromCode(code);
+    const safePath = `${space}/${String(path).replace(/[^a-zA-Z0-9._/-]/g, '_')}`;
+
+    const dlRes = await fetch(`${SUPABASE_URL}/storage/v1/object/recordings/${safePath}`, {
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      },
+    });
+
+    if (!dlRes.ok) {
+      return res.status(404).json({ error: "Kayit bulunamadi." });
+    }
+
+    const buffer = Buffer.from(await dlRes.arrayBuffer());
+    res.json({ dataBase64: buffer.toString('base64') });
+  } catch (error: any) {
+    console.error("Error in /api/sync/download-audio:", error);
+    res.status(500).json({ error: formatErrorMessage(error, "Ses kaydi indirilemedi.") });
+  }
+});
+
 // 2. Phonetic & Grammar Analysis (Katman 2)
 app.post("/api/analyze-phonetics-grammar", async (req, res) => {
   try {
