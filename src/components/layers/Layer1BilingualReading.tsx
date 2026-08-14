@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { VideoLesson, SentencePair } from '../../types';
 import { extractYouTubeId } from '../../lib/youtube';
 import { SelectionToCard } from '../vocab/SelectionToCard';
-import { Volume2, Bookmark, CheckCircle, Search, Eye, EyeOff, Youtube, Edit2, Check, X, LayoutGrid, List, Play, Sliders, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Volume2, Bookmark, CheckCircle, Search, Eye, EyeOff, Youtube, Edit2, Check, X, LayoutGrid, List, Play, Sliders, AlertTriangle, RefreshCw, Pause } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -298,6 +298,39 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
     }
   };
 
+  /** Videoyu oynat/duraklat. Transkriptten ayrılmadan kontrol için. */
+  const togglePlayback = () => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      if (isVideoPlaying) {
+        player.pauseVideo();
+        setIsVideoPlaying(false);
+      } else {
+        player.playVideo();
+        setIsVideoPlaying(true);
+      }
+    } catch (err) {
+      console.warn('Oynatma durumu değiştirilemedi:', err);
+    }
+  };
+
+  // Boşluk tuşu: oynat/duraklat. Yazı alanlarında devre dışı.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return;
+      // Metin seçiliyken boşluk tuşu seçimi bozmasın
+      if (window.getSelection()?.toString()) return;
+      e.preventDefault();
+      togglePlayback();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const speakText = (sentenceId: number, text: string) => {
     if ('speechSynthesis' in window) {
       if (playingSentenceId === sentenceId) {
@@ -504,7 +537,19 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
               </div>
 
               <div className="flex items-center justify-between pt-1">
-                <div className="flex items-center space-x-2 truncate max-w-[220px]">
+                <div className="flex items-center space-x-2 truncate max-w-[260px]">
+                  <button
+                    type="button"
+                    onClick={togglePlayback}
+                    title={isVideoPlaying ? 'Duraklat' : 'Oynat'}
+                    className="flex items-center justify-center w-8 h-8 rounded-full border border-[var(--hairline)] hover:border-[var(--ink)] text-[var(--ink)] transition-colors cursor-pointer shrink-0"
+                  >
+                    {isVideoPlaying ? (
+                      <Pause className="w-3.5 h-3.5 fill-current" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                  </button>
                   {isVideoPlaying ? (
                     <span className="inline-flex items-center space-x-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
@@ -586,15 +631,29 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
         <div ref={transcriptAreaRef} className={viewMode === 'split' ? 'lg:col-span-7' : 'w-full'}>
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
 
-            <div className="bg-slate-900 text-white px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${isVideoPlaying ? 'bg-amber-400 animate-ping' : 'bg-slate-500'}`} />
-                <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-100">
-                  Transkript (Canlı Vurgu)
+            <div className="bg-slate-900 text-white px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 sticky top-0 z-10">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {ytId && (
+                  <button
+                    type="button"
+                    onClick={togglePlayback}
+                    title={isVideoPlaying ? 'Duraklat (boşluk)' : 'Oynat (boşluk)'}
+                    className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors cursor-pointer shrink-0"
+                  >
+                    {isVideoPlaying ? (
+                      <Pause className="w-3.5 h-3.5 fill-current" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                    <span>{isVideoPlaying ? 'Duraklat' : 'Oynat'}</span>
+                  </button>
+                )}
+                <h3 className="text-xs font-medium tracking-wide text-slate-300 truncate">
+                  Transkript
                 </h3>
               </div>
-              <span className="text-[11px] font-mono font-semibold text-slate-400">
-                {filteredSentences.length} Cümle
+              <span className="timecode text-slate-400 shrink-0">
+                {isVideoPlaying ? formatSeconds(currentVideoTime) : `${filteredSentences.length} cümle`}
               </span>
             </div>
 
@@ -608,11 +667,10 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                   <div
                     key={pair.id}
                     ref={isActive ? activeSentenceRef : null}
-                    onClick={() => jumpToSentenceInVideo(pair)}
-                    className={`p-4 sm:p-5 transition-all duration-200 cursor-pointer border-l-4 ${
+                    className={`p-4 sm:p-5 transition-all duration-200 border-l-4 select-text ${
                       isActive
-                        ? 'bg-amber-50/95 border-amber-500 ring-2 ring-amber-300/80 shadow-md'
-                        : 'hover:bg-amber-50/40 border-slate-200 hover:border-amber-300'
+                        ? 'bg-amber-50/95 border-amber-500 shadow-sm'
+                        : 'border-slate-200'
                     }`}
                   >
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
@@ -662,7 +720,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                           <span className="text-xs text-slate-400 italic flex-1">Türkçe çeviri gizlendi</span>
                         )}
 
-                        <div className="flex items-center space-x-1 shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center space-x-1 shrink-0 ml-2">
                           {start !== null && (
                             <button
                               type="button"
