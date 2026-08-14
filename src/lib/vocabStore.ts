@@ -70,6 +70,21 @@ function tx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBReque
   );
 }
 
+/**
+ * Kart deposu her değiştiğinde tetiklenen olay.
+ * Kartlar birden çok ekrandan eklenebildiği için (transkriptte seçim,
+ * elle ekleme, ayıklama) listeyi gösteren bileşenin haberdar olması gerekiyor.
+ */
+export const VOCAB_CHANGED_EVENT = 'vocab-cards-changed';
+
+function notifyChanged() {
+  try {
+    window.dispatchEvent(new CustomEvent(VOCAB_CHANGED_EVENT));
+  } catch {
+    /* tarayıcı dışı ortamlarda yoksay */
+  }
+}
+
 export function makeCardId(lessonId: string, front: string): string {
   return `${lessonId}::${front.toLowerCase().trim()}`;
 }
@@ -124,6 +139,15 @@ export async function getCardsByLesson(lessonId: string): Promise<VocabCard[]> {
 }
 
 export async function putCard(card: VocabCard): Promise<void> {
+  await tx('readwrite', (s) => s.put({ ...card, updatedAt: Date.now() } as any));
+  notifyChanged();
+}
+
+/**
+ * Senkronizasyon sirasinda kullanilir: her kayitta olay firlatmaz.
+ * Yuzlerce kart cekilirken arayuzun surekli yeniden cizilmesini onler.
+ */
+export async function putCardSilently(card: VocabCard): Promise<void> {
   await tx('readwrite', (s) => s.put(card));
 }
 
@@ -164,6 +188,7 @@ export async function addCardsIfMissing(cards: VocabCard[]): Promise<number> {
 
     t.oncomplete = () => {
       db.close();
+      notifyChanged();
       resolve(added);
     };
     t.onerror = () => {
@@ -175,6 +200,7 @@ export async function addCardsIfMissing(cards: VocabCard[]): Promise<number> {
 
 export async function deleteCard(id: string): Promise<void> {
   await tx('readwrite', (s) => s.delete(id) as unknown as IDBRequest<void>);
+  notifyChanged();
 }
 
 export async function deleteCardsByLesson(lessonId: string): Promise<void> {
