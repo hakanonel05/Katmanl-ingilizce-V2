@@ -93,6 +93,28 @@ export async function listRecordings(lessonId: string): Promise<StoredRecording[
   });
 }
 
+/** Tum derslerdeki kayitlar (senkronizasyon icin). */
+export async function listAllRecordings(): Promise<StoredRecording[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => {
+      db.close();
+      resolve(req.result || []);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
+  });
+}
+
+/** Senkronizasyon sirasinda kayit yazar (saveRecording ile ayni, ayri isim netlik icin). */
+export async function saveRecordingSilently(rec: StoredRecording): Promise<void> {
+  return saveRecording(rec);
+}
+
 export async function deleteRecording(lessonId: string, sentenceId: number): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
