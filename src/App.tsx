@@ -501,7 +501,7 @@ async function buildLessonData(
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950 flex flex-col antialiased">
+    <div className="min-h-screen bg-[var(--paper)] text-[var(--ink)] flex flex-col">
       {/* Top Header */}
       <Header
         progress={displayProgress}
@@ -511,8 +511,8 @@ async function buildLessonData(
       />
 
       {/* Main Content Workspace */}
-      <main className="flex-1 max-w-[1920px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 space-y-6">
-        {/* Lesson Selector Component */}
+      <main className="flex-1 w-full">
+        <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-5">
         <LessonSelector
           lessons={lessons}
           activeLesson={activeLesson}
@@ -525,28 +525,31 @@ async function buildLessonData(
           onEditLesson={(lesson) => setEditingLesson(lesson)}
           onRestorePresetLessons={handleRestorePresetLessons}
         />
+        </div>
 
-        {/* 7-Layer Navigation Stepper */}
         <LayerNavigation
           activeLayer={activeLayer}
           onSelectLayer={setActiveLayer}
           completedLayers={activeLesson ? activeLesson.completedLayers : []}
         />
 
-        {/* Dynamic Layer Views */}
-        <div className="min-h-[500px]">
+        <div className="min-h-[500px] max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {!activeLesson && activeLayer !== 9 && activeLayer !== 10 ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4 shadow-sm max-w-xl mx-auto my-12">
-              <h3 className="text-base font-bold text-slate-900">Çalışacak Ders Seçilmedi</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Tüm dersler silindi. Yukarıdaki &quot;Yeni YouTube Videosu / Metin Ekle&quot; butonundan kendi çalışmanızı ekleyebilir veya örnek dersleri geri yükleyebilirsiniz.
+            <div className="max-w-md mx-auto my-16 text-center space-y-4">
+              <p className="eyebrow">Başlangıç</p>
+              <h3 className="font-display text-2xl text-[var(--ink)]">
+                Bir <em className="italic font-light">ders</em> ekleyin
+              </h3>
+              <p className="text-sm text-[var(--ink-2)] leading-relaxed">
+                Yukarıdan bir YouTube linki verin; altyazı çekilip cümlelere bölünür ve
+                yedi katmanlı çalışma başlar. Dilerseniz örnek derslerle de deneyebilirsiniz.
               </p>
               <button
                 type="button"
                 onClick={handleRestorePresetLessons}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer"
+                className="h-10 px-5 rounded-[10px] border border-[var(--hairline)] text-[var(--ink)] text-xs font-medium hover:border-[var(--ink)] transition-colors cursor-pointer inline-flex items-center justify-center"
               >
-                Varsayılan Örnek Dersleri Yükle
+                Örnek dersleri yükle
               </button>
             </div>
           ) : (
