@@ -125,15 +125,13 @@ export const Layer2ActiveListening: React.FC<Props> = ({ lesson, onCompleteLayer
                       ref={isActive ? activeRef : null}
                       className={`p-4 border-l-4 transition-all ${
                         isActive
-                          ? 'bg-emerald-50 border-emerald-500 shadow-sm'
+                          ? 'bg-amber-50 border-amber-500 shadow-sm'
                           : 'border-transparent'
                       }`}
                     >
                       <p
-                        className={`leading-relaxed ${
-                          isActive
-                            ? 'text-emerald-950 font-bold text-base sm:text-lg'
-                            : 'text-slate-700 font-medium text-sm sm:text-base'
+                        className={`transcript-en ${
+                          isActive ? 'text-[var(--marker-ink)] font-medium' : 'text-slate-700'
                         }`}
                       >
                         {pair.en}

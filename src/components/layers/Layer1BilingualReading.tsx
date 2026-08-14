@@ -625,7 +625,7 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                               e.stopPropagation();
                               jumpToSentenceInVideo(pair);
                             }}
-                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-mono font-bold transition cursor-pointer shrink-0 mt-0.5 ${
+                            className={`timecode inline-flex items-center space-x-1 px-2 py-1 rounded transition cursor-pointer shrink-0 mt-0.5 ${
                               isActive ? 'bg-amber-600 text-white shadow-sm' : 'bg-slate-100 hover:bg-amber-200 text-slate-800'
                             }`}
                             title="Videoda bu saniyeye atla"
@@ -638,14 +638,14 @@ export const Layer1BilingualReading: React.FC<Layer1BilingualReadingProps> = ({
                         <div className="flex-1">
                           {isActive ? (
                             <div className="bg-amber-100/90 text-amber-950 font-bold p-3.5 rounded-lg border border-amber-300 shadow-sm leading-relaxed">
-                              <p className="text-amber-950 font-bold leading-relaxed text-base sm:text-lg">{pair.en}</p>
+                              <p className="transcript-en text-amber-950 font-medium">{pair.en}</p>
                               <div className="mt-2 inline-flex items-center space-x-1.5 px-2.5 py-0.5 bg-amber-600 text-white text-xs font-bold rounded-full uppercase tracking-wider shadow-sm">
                                 <Volume2 className="w-3.5 h-3.5" />
                                 <span>Canlı Konuşuluyor{timeTag ? ` (${timeTag})` : ''}</span>
                               </div>
                             </div>
                           ) : (
-                            <p className="text-slate-900 font-bold leading-relaxed text-base sm:text-lg">{pair.en}</p>
+                            <p className="transcript-en text-slate-900">{pair.en}</p>
                           )}
                         </div>
                       </div>

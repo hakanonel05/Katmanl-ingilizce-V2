@@ -277,7 +277,7 @@ export const Layer3Shadowing: React.FC<Props> = ({ lesson, onCompleteLayer }) =>
                 </div>
               </div>
 
-              <p className="text-lg sm:text-2xl font-bold text-slate-900 leading-relaxed">
+              <p className="transcript-en text-xl sm:text-2xl text-slate-900">
                 {current?.en}
               </p>
 
